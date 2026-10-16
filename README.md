@@ -8,7 +8,7 @@ Status: a prototype, with one live deployment (October 2026).
 
 - [THREAT_MODEL.md](THREAT_MODEL.md): what the code enforces, what root on each host can do, what a signed verdict proves and what it does not.
 - [WHAT_IS_VERIFIED.md](WHAT_IS_VERIFIED.md): what ran on the live deployment, what only the test suite shows, what we cannot verify.
-- Live examples: the anchors repository, https://github.com/giusefrr/lockrun-anchors-p3, and the signed verdicts, https://github.com/giusefrr/lockrun-verdicts-p3.
+- Live examples: the anchors repository, https://github.com/giusefrr/lockrun-anchors-demo, and the signed verdicts, https://github.com/giusefrr/lockrun-verdicts-demo.
 
 File names in code formatting (`lockrun/...`, `tests/...`, `do.sh`, `README.md`) refer to lockrun's
 source tree, which is not in this repository. These copies are generated (`do.sh docs-publish`):

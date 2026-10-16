@@ -6,8 +6,74 @@ test suite shows, and what we cannot verify. Status as of 16 October 2026.
 ## 1. Verified on a live deployment
 
 DigitalOcean nyc2, droplets `s-1vcpu-2gb-amd`, Ubuntu 24.04 (kernel 6.8.0-142), Podman 4.9.3, gVisor
-`runsc` release-20261005.0. 14–15 October 2026. Runner image `sha256:853b792a…` (14 October), then
+`runsc` release-20261005.0. 14–16 October 2026. Runner image `sha256:853b792a…` (14 October), then
 `sha256:ce7695aa…` (15 October: one layer, every file 0:0, no `/etc/hosts` or `resolv.conf`).
+
+**One command, from zero (16 October).** The deployment of 14–16 October was torn down
+(`./do.sh destroy`) and its local state moved aside (`reset-local`). Then
+`./do.sh demo-from-zero --researcher tester --holdout demo-1 --anchors-repo giusefrr/lockrun-anchors-demo
+--verdicts-repo giusefrr/lockrun-verdicts-demo --ops --yes` rebuilt everything from an empty account
+(a VPC, firewalls, tags and droplets, with only the admin SSH key in place).
+
+- **Steps 1–41 passed** in 32 min 25 s (16:43:21–17:15:46, laptop time). The run then stopped at
+  step 42, `anchors-deposit`, on a bug: the first deposit, at step 20, ran before any chain existed
+  (anchors before chains). It staged an empty `anchors.jsonl` and committed nothing, and every
+  later deposit refused `the clone has changes other than anchors.jsonl: A  anchors.jsonl`.
+  - The fix, `1290c3c`, is test first: an empty file is never staged, and a file left staged that
+    way is accepted.
+  - It was deployed by re-running step 20, `anchors-install`, which then deposited 3 anchors.
+  - Steps 42–55 were then run by hand, in the demo's order.
+- **Per-step times.** demo-from-zero prints a step's time only when the step fails, so the times
+  for steps 1–41 come from the timestamps of their step logs and artefacts in `out/`. Steps 42–55
+  were timed directly.
+
+  | Steps | Time |
+  |---|---|
+  | 1–8: allowlist, wheel, preflight, VPC, tags, firewalls, check, builder droplet | 1 min 24 s |
+  | 9–12: build the image, fetch it, destroy the builder, create the service | 4 min 54 s (image on the laptop 1 min 33 s after the build began) |
+  | 13 `provision-service` | 5 min 39 s |
+  | 14 `check-service` | 28 s |
+  | 15–20: GitHub host keys, strategy deploy key, repo allowlist, anchors repository and key, `anchors-install` | 27 s |
+  | 21–23: `risk-key`, verdicts repository and key | 8 s |
+  | 24 `create-droplet lockrun-p3-runner-tester` | about 61 s |
+  | 25–26 `provision-runner` and `retag-locked` | 5 min 7 s |
+  | 27 `lock-runner` | 11 s |
+  | 28–30: `check-runner`, `register-runner` (bound to tester), `create-droplet lockrun-p3-verify-1` | 3 min 53 s |
+  | 31–32 `provision-runner` and `retag-locked` | 5 min 19 s |
+  | 33 `lock-runner` | 12 s |
+  | 34–35 `check-runner` and `register-runner` (verify) | 2 min 58 s |
+  | 36–41: token, holdout `demo-1`, honest execution, promote (pending), `verify-fresh` (match), promote | 44 s |
+  | 42 `anchors-deposit`, first attempt | 3 s, failed (above) |
+  | 20 `anchors-install` again, with the fix | 7 s |
+  | 42 `anchors-deposit` | 7 s |
+  | 43 `anchors-verify demo-1 2h` | 5 s |
+  | 44 `sign-verdicts` | 5 s |
+  | 45 `verify-verdict` | 1 s |
+  | 46 `create-droplet lockrun-p3-ops` | 40 s |
+  | 47 `provision-ops` | 60 s |
+  | 48 `demo-ops-key` | 1 s |
+  | 49 `ops-sync` | 17 s |
+  | 50 `ops-authorize` | 5 s |
+  | 51 `update-service-fw` | 7 s |
+  | 52 `update-admin-ip` | 9 s |
+  | 53 `check-firewalls` | 4 s |
+  | 54 `demo-ops-auth` | 928 s, almost all of it waiting for the operator's `doctl auth init` on the ops droplet |
+  | 55 `demo-ops-recycle` | 1179 s |
+
+- **What the run produced:**
+  - **The verdict:** `tester`'s honest strategy on `demo-1` gave PASS, N 2, DSR 1.0, record 10.
+  - **Anchors:** the anchors repository verified at a 2 h cadence.
+  - **The signed verdict:** signed on the laptop and verified offline from fresh public clones. It
+    is the first live verdict that states its code version (`code_sha256 db067935…`).
+- **The recycle (step 55):** `recycle-all` from the ops droplet, run once by hand, took 1167 s.
+  - tester was rebuilt as tester2 in 563 s, and verify-1 as verify-2 in 585 s.
+  - Each new runner was provisioned in 318 s, locked, and passed `check-runner` (168–169 s).
+  - The primary's `runner_replace` and the verify runner's registration were recorded, and
+    `@runners` was verified after each swap. The old droplets were destroyed.
+  - `ops-pull` then pinned both new runners on the laptop.
+- **End to end:** 76 min, from 16:43 to 18:00, including the fix and the wait at step 54.
+
+The lists below are for the 14–16 October deployment unless they say otherwise.
 
 - **Runner gates** (`runner-check.sh`): 28 of 28 (B0–B7, A1, C1–C2, D1–D4, E1–E6, F1–F4, G1–G2,
   H1) on `lockrun-p3-runner-tester2` and `lockrun-p3-verify-2` (first image), and on
@@ -92,7 +158,7 @@ DigitalOcean nyc2, droplets `s-1vcpu-2gb-amd`, Ubuntu 24.04 (kernel 6.8.0-142), 
 
 ## 2. Verified by the test suite only
 
-1335 tests (`uv run pytest`, 16 October 2026). The stand-ins:
+1363 tests (`uv run pytest`, 16 October 2026). The stand-ins:
 
 - `tests/fake_podman.py`: Podman, `systemd-run` and `systemctl` on a runner. It models `run`,
   `--rm`, `rm --force`, `container inspect`, `ps`, the job's tmpfs and `podman unshare`, and reports
