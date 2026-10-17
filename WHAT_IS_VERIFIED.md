@@ -152,8 +152,15 @@ The lists below are for the 14–16 October deployment unless they say otherwise
   (the rebuilds reported as recycles), no reboot or apt run; one synthetic execution (tick 12) and
   one smoke after the window (tick 13) refused by `tester`'s seal quota (`429`, the hand-run seals of
   15 October still in its 24 h), clean again from the next tick.
-- **Timings:** `podman load` of the image into a fresh store 6.4–6.7 s; a runner from an empty
-  droplet to locked and checked 9 min 0 s to 9 min 16 s; an image build 36 s.
+- **Timings:**
+  - `podman load` of the image into a fresh store: 6.4–6.7 s.
+  - A runner from an empty droplet to locked and checked: 9 min 0 s to 9 min 16 s.
+  - An image build: 36 s.
+  - **Seal + execute:** 8.2 s from the seal record to the returns record, on the service's clock
+    (`demo-1`, 16 October; the ledger's timestamps). That is 1.0 s to the opening, then the two
+    executions on the bound runner. A fresh verification's single run took 3.4 s. The client's own
+    time (TLS, polling) is not included. This is the overhead a CI job adds per tag with `[execute]`
+    (`examples/ci/github-actions-seal.yml`); a seal alone is one request.
 - **Firewall configuration:** `check-firewalls` matches the generated rules; a retagged runner was
   unreachable from the service until DigitalOcean applied the tag rule, then reachable.
 
