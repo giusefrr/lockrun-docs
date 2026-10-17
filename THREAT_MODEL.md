@@ -290,15 +290,34 @@ The agent's launch check read this as the profile it asked for (every field matc
 - **Same data elsewhere.** Trials run outside lockrun on public copies of the data are invisible.
 - **Rule-aware dummy trials** can lower trial-Sharpe variance to its floor and raise the DSR
   undetected (internal red team). Effective-N is out of scope.
-- **Failed trials in V (two statistical rules, for external review).** Late failures (k ≥ T/2)
-  enter V zero-padded (`zero_tail`). Since 15 October 2026 early ones do too, once their outcome
-  is recorded: padded to T when that is a valid series, else a Sharpe of exactly 0
-  (`zero_sharpe`). The verdict is the lowest DSR with and without them, so adding failed trials
-  can only make it stricter (`tests/test_early_failures_in_v.py`). The only promote block left is
-  an opening of one's own with no recorded outcome. Before, an own config that never returned
-  blocked its researcher on that holdout for good. Open for review: whether a Sharpe of 0 is the
-  right placeholder for an opening that produced nothing, and how a placeholder 0 should interact
-  with the dummy detector, which never sees it.
+- **Failed trials (statistical rules, for external review).**
+  - **Failures with partial returns** enter the "with" V zero-padded to T (`zero_tail`): those are
+    draws of the same strategy.
+    - Late failures (k ≥ T/2) have done so from the start.
+    - Since 15 October 2026 early ones do too, once their outcome is recorded, when the padded
+      series is valid.
+  - **Rule change, 15 October 2026** (`b73220d`): a failed opening with no valid series entered the
+    "with" V as a Sharpe of exactly 0 (`zero_sharpe`). The only promote block left was an opening of
+    one's own with no recorded outcome; before, an own config that never returned blocked its
+    researcher on that holdout for good.
+  - **Rule change, 17 October 2026** (`0716dee`; code version `code_sha256 25dc3088…`): a failed
+    opening with no valid series counts in N and stays out of V. `n_zero_sharpe` in the promote
+    record counts these openings. The promote block stays as it was after 15 October.
+    - **Why:** the adversary's best case for zeros is real Sharpes widely dispersed and centred
+      near zero. With 20 such trials (uniform in [-0.5, 0.5], or normal with sd 0.3) and 0, 1, 5,
+      20 and 60 failed trials added, each zero lowered the "with" V and its sr0. At 60 failures
+      sr0 fell 0.560 → 0.358 (uniform) and 0.452 → 0.298 (normal); every step down was strict.
+    - The verdict never improved, but only because it is the minimum over the families: the
+      "without" family's sr0 rose with N (0.560 → 0.715). A bar that falls as failures are added
+      was one change away from an exploit.
+    - **Since 17 October**, `tests/test_early_failures_in_v.py` asserts that adding failed trials
+      never lowers sr0 in any family, never raises the verdict's DSR, and never turns a FAIL into a
+      PASS. A 0.8 candidate exercises the cross from PASS to FAIL at the 0.95 bar.
+  - **Verdicts computed under the 15 October rule** with failed openings in V recompute
+    differently. `sign-verdicts` refuses them until a promote under the new rule supersedes them.
+  - **Open for review:** whether zero-padding an early failure's partial returns is the right
+    treatment for a strategy that stopped early, and how the padded series interact with the dummy
+    detector.
 - **Output channel.** Per execution: success or failure, Sharpe/skew/kurtosis rounded, completion
   time; per promote, statistics over all trials at 3 significant digits. Ceiling about 45–50 bits
   per execution, by counting values.
@@ -321,8 +340,9 @@ The agent's launch check read this as the profile it asked for (every field matc
    commit only as far as the git host's history, and the gap from a compromise onward.
 7. **Deployment state.** The P3 deployment predates bindings (one shared runner; its openings are
    reported as predating the bindings log), and its `do.sh` accepts a single primary runner.
-8. **Failed trials in V:** the zero-tail rule and, since 15 October 2026, early failures as
-   zero-padded series or a Sharpe of 0 (`lockrun/trials.py`, `_add_failed_opening`), and the
-   promote block reduced to openings with no recorded outcome.
+8. **Failed trials:** the zero-tail rule, early failures as zero-padded series (since 15 October
+   2026), failed openings with no valid series in N but not in V (since 17 October 2026; the rule of
+   15 October put a Sharpe of 0 for them in V), all in `lockrun/trials.py` (`_add_failed_opening`,
+   `evaluate_promotion`), and the promote block reduced to openings with no recorded outcome.
 9. **Fresh-runner procedure:** "rebuilt" is not provable in code; an abandoned verify-fresh claim is
    closed without the verify runner confirming its job stopped.

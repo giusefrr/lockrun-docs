@@ -1,7 +1,7 @@
 # What is verified
 
 For a risk team or an external reviewer. Three lists: what ran on a live deployment, what only the
-test suite shows, and what we cannot verify. Status as of 16 October 2026.
+test suite shows, and what we cannot verify. Status as of 17 October 2026.
 
 ## 1. Verified on a live deployment
 
@@ -94,7 +94,8 @@ The lists below are for the 14–16 October deployment unless they say otherwise
 - **Fresh-runner verification:** four candidates verified on four fresh verify runners, each `match`,
   each promoted to a PASS whose record names its fresh verification and the ledger, witness and
   bindings heads it was computed from. One of them (`test-1`) carries three failed trials as zeros in
-  V (`n_zero_sharpe: 3`).
+  V (`n_zero_sharpe: 3`): the 15 October rule, replaced on 17 October (failed openings with no valid
+  series now count in N only).
 - **Runner replace:** `runner_replace` records tester → tester2 → tester3 → tester4, verify runners
   registered and removed; `lockrun-risk verify @runners` passes (8 records).
 - **Runner recycling:** `do.sh recycle-runner lockrun-p3-runner-tester3` (15 October, 16:01Z): a new
@@ -158,7 +159,7 @@ The lists below are for the 14–16 October deployment unless they say otherwise
 
 ## 2. Verified by the test suite only
 
-1363 tests (`uv run pytest`, 16 October 2026). The stand-ins:
+1369 tests (`uv run pytest`, 17 October 2026). The stand-ins:
 
 - `tests/fake_podman.py`: Podman, `systemd-run` and `systemctl` on a runner. It models `run`,
   `--rm`, `rm --force`, `container inspect`, `ps`, the job's tmpfs and `podman unshare`, and reports
@@ -172,6 +173,13 @@ The lists below are for the 14–16 October deployment unless they say otherwise
   for the service tests, with no container.
 
 Also only in the suite so far: `recycle-all` waiting for or skipping a runner with a job in flight.
+The 17 October rule (failed trials in N, not in V; THREAT_MODEL.md, "Known gaps") is in the suite
+only until the service is updated. `tests/test_early_failures_in_v.py` adds 1, 5, 20 and 60 failed
+trials to 20 real Sharpes widely dispersed around zero, with candidates of 0.22, 0.45 and 0.8 (a PASS
+near the 0.95 bar). It checks that sr0 never falls in any family, that the verdict's DSR never rises,
+and that the 0.8 candidate crosses from PASS to FAIL and never back. Under the 15 October rule the
+"with" sr0 fell at every step.
+
 Signed verdicts (`tests/test_sign_verdicts.py`, `test_verify_verdict.py`, `test_verdicts_deploy.py`)
 are tested against an in-process service, local git repositories and the fake ssh.
 
