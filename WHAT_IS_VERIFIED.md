@@ -1,7 +1,7 @@
 # What is verified
 
 For a risk team or an external reviewer. Three lists: what ran on a live deployment, what only the
-test suite shows, and what we cannot verify. Status as of 17 October 2026.
+test suite shows, and what we cannot verify. Status as of 18 October 2026.
 
 ## 1. Verified on a live deployment
 
@@ -115,6 +115,22 @@ The lists below are for the 14–16 October deployment unless they say otherwise
   passed on each new runner, `runner_replace` and `verify_runner` recorded, `@runners` verified
   (12 records), the old droplets destroyed; the summary in the service's journal (`lockrun-recycle`);
   `check-service` E7 passes the next morning.
+- **Nightly recycles on the demo-from-zero deployment** (the ops droplet's timer, 03:00 UTC, unattended):
+  - **17 October:** `recycle-all exit 0` in 1172 s; tester2 → tester3, verify-2 → verify-3.
+  - **18 October:** `recycle-all exit 0` in 1187 s; tester3 → tester4 (592 s), verify-3 → verify-4 (587 s).
+  - With the recycle run by hand at step 55 on 16 October (1167 s), that is three consecutive
+    recycles, each with `exit 0`, the old droplets destroyed, and the summary in the service's
+    journal.
+- **Risk report** (`./do.sh risk-report`, 17 and 18 October): one static page per day, generated
+  from the service through read-only commands and the public verdicts repository. On 18 October,
+  15:29 UTC, it showed:
+  - `demo-1`: N 2, nothing excluded from V, anchors verify OK (44 anchors, 44 commits, append-only);
+  - the PASS verdict at record 10, signed: yes;
+  - `lockrun-p3-runner-tester4` and `lockrun-p3-verify-4`, 12.3 h and 12.2 h old;
+  - the last deposit at 15:00 UTC, and the 03:00 recycle's `exit 0`.
+  - On 17 October the service still predated the record numbers in `lockrun-risk report`; the page
+    matched the verdict to its signature by run (`9ced836`). By 18 October the service had been
+    updated, and the record number shows.
 - **The QUICKSTART by hand** (`docs/QUICKSTART.md`, 16 October, by the operator): as `tester`, seal
   `honest.py` on `test-2` (`9ccc853232da`), execute, promote (`pending_verification`); as risk,
   `verify-fresh` on verify-6 (`match`); promote again: PASS. The same strategy resealed at another
@@ -166,7 +182,7 @@ The lists below are for the 14–16 October deployment unless they say otherwise
 
 ## 2. Verified by the test suite only
 
-1369 tests (`uv run pytest`, 17 October 2026). The stand-ins:
+1402 tests (`uv run pytest`, 18 October 2026). The stand-ins:
 
 - `tests/fake_podman.py`: Podman, `systemd-run` and `systemctl` on a runner. It models `run`,
   `--rm`, `rm --force`, `container inspect`, `ps`, the job's tmpfs and `podman unshare`, and reports
