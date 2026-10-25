@@ -43,6 +43,16 @@ shows, and what we cannot verify.
    that never reaches the service host, after checking it. `lockrun-verify-verdict` checks the
    signed verdict with nothing but risk's public key and clones of two public append-only
    repositories (§3a).
+9. **Every execution record is signed by the runner that ran it.** Each runner makes its own
+   Ed25519 key at provisioning, held by a user of its own (§4); risk (K_risk) or the operator
+   droplet (K_ops) certifies it in the bindings log. The opening record carries the runner's signed
+   opening, made once the job is up and before any row is sent; the outcome carries each run's
+   signed end, naming the bytes relayed each way and their sha256. Each signature takes the key's
+   next counter. From the cutoff (`require_runner_signatures`, recorded in the bindings log and in
+   every holdout's ledger) a record without a valid signature is a chain error, and so is a gap in
+   a key's counters across all ledgers. Risk's `verify` and `sign-verdicts` replay the signed
+   streams with the plaintext holdout: the rows were the holdout's and the recorded returns are what
+   the signed weights give.
 
 ## 2. Actors, secrets and trust boundaries
 
@@ -58,6 +68,8 @@ that researcher's strategies; state that survives a job is listed in `RUNNER_PER
 | Ledgers, bindings log, witness logs | Service host: hash-chained JSONL, witness logs `chattr +a` | Researchers read (head, count) through the API. Root can rewrite all of them (§3) |
 | Risk's verdict-signing key (Ed25519) | Risk's laptop, `deploy/p3/out/risk-key/`, 0600 (later an HSM) | Risk. Never the service host, the runners or the operator droplet (§3a) |
 | Verdicts deploy key | Risk's laptop, same directory | Risk: write access to the verdicts repository only |
+| Runner signing key (Ed25519, one per runner build) | The runner, `/var/lib/lockrun-signer`, 0600 in 0700, user `lockrun-signer`; replaced with the runner every night | Root on that runner. The runner user (the agent, a gVisor escape) can ask the signer to sign through one sudo rule, never read the key |
+| K_ops, certifies the runners recycle-all builds | The operator droplet, `/etc/lockrun-ops/runner-cert.key`, 0600, made there | Root on the operator droplet |
 
 **Boundaries.** *Researcher → service:* TLS 1.3 with a pinned certificate, a bearer token, seven
 JSON endpoints, 64 KiB bodies, daily per-researcher quotas, an allowlist of repository URLs per
@@ -71,6 +83,15 @@ and its CPU flags reported, and its build_id must be the one bound to the resear
 issue tokens; bind or rebind runners by writing the bindings log; make the service lie in every
 answer; stop exporting anchors (visible as a cadence gap); rewrite the local ledgers, witness logs
 and bindings log together, with recomputed hashes.
+
+**Cannot, from the cutoff on (claim 9):** write an execution record no runner signed. A fabricated
+opening or outcome, or one whose signature is forged, is a chain error before the next deposit and
+after it, though root's own deposit anchors it. A signed record removed leaves a gap in its runner
+key's counters, seen at the runner's next signed statement and at the latest at its final statement
+when the nightly recycle retires it. **Can still:** start genuine executions on a researcher's runner
+(it holds the service's SSH key; researcher-signed execute requests are the next item), and stop
+them, which the runner signs as what they were; stream altered rows, which the runner signs as
+received and risk's replay with the plaintext refuses.
 
 **Cannot:** change what was deposited off-host. Anchors (count, head, time, chained) are pushed to a
 git repository whose `main` the git host protects; `anchor verify-repo` flags any commit that does
@@ -90,6 +111,10 @@ service host's own.
 | Ledger and witness cut, or rewritten, together | refused (does not extend the head it verified) | accepted after a restart; `verify` passes | **detected** |
 | Mid-ledger edit, then a valid record appended on the real head | not seen (only new lines are read) | detected (chain) | |
 | Bindings log rewritten consistently | refused while running | `verify <holdout>` fails: openings name heads no longer in it | detected |
+| Opening removed, its outcome kept, chain and witness rewritten | refused (does not extend the head it verified) | `verify` fails: the outcome closes no opening | detected |
+| An execution record without its runner's signature, or with a forged one (after the cutoff) | refused at write | `verify` fails: the statement is missing or does not verify | (anchors it at the next deposit: still fails) |
+| A signed execution record removed, chain and witness rewritten | | `verify @runners` fails: a gap in the runner key's counters (the tail: at its next statement or its final) | detected |
+| Bindings record appended that breaks a binding rule (a runner moved, a second runner for a researcher) | refused on the next read | detected: `verify @runners` names the record and the rule | |
 | Verdict computed on a ledger later cut and re-anchored | | | `verify --verdict` fails |
 
 ## 3a. Signed verdicts
@@ -113,7 +138,10 @@ blobs (read under the append lock), it:
 - checks every chain it signs from against its witness log and against every anchor ever
   deposited, in an anchors history with no tamper alarm;
 - checks that each verdict's `computed_from` is the ledger read just before it;
-- recomputes the verdict from the records before it, with the service's own code.
+- recomputes the verdict from the records before it, with the service's own code;
+- checks the runners' records (claim 9) with risk's key and its own copy of K_ops' public key: every
+  certificate, every statement, each key's counters, and, for each holdout with signed outcomes, the
+  streams replayed with the plaintext risk kept (`--holdout-file`, then required).
 
 The verdict, N and threshold must be identical, the other fields too, and numbers must agree
 within 1e-12. It stops, signing nothing, on anything else. The signature covers the promote record
@@ -138,10 +166,14 @@ signed record cannot be swapped for another.
 
 **It does not prove:**
 
-- **From a compromise of the service host onward,** root can append records that are consistent
-  with each other: a candidate's returns, its fresh verification, extra openings. Risk's
-  recomputation then agrees with them. Closing this needs outputs signed on the locked runners;
-  that is not built.
+- **That the researcher asked for every execution.** From a compromise of the service host onward,
+  root can start genuine executions on a researcher's runner, or stop them; the runner signs them
+  as they ran, so they count. Before the cutoff (claim 9), or on a runner with no key, root can
+  still append records consistent with each other, which risk's recomputation then agrees with.
+  sign-verdicts checks the runners' signatures and replays their streams before it signs.
+- **Anything a compromised runner signed.** Root on a researcher's runner, or a gVisor escape that
+  asks its signer, can sign false statements for that runner's researcher until the nightly
+  rebuild; after its final statement the key signs nothing that counts.
 - **That `K_risk` and the code are sound.** A stolen laptop key signs anything. The DSR is
   computed by lockrun's code, which the verifier runs and may read. A third party cannot recompute
   the DSR: the trials' returns stay private.
@@ -167,7 +199,28 @@ anchors) or risk's laptop (the verdicts) can write.
 same researcher and the old retired in one record; a retired runner never runs again. The worker
 reads the log at dispatch, and the runner must answer with the bound build_id. **Routing proof:**
 every opening names its runner and the bindings-log head; `verify` checks each against the binding
-valid at that head. Verify runners are registered in the bindings log and can never be bound.
+valid at that head, and every outcome (returns, no_returns) must close an opening earlier in the
+chain, of the same run, researcher and runner: an outcome whose opening was removed is refused by
+`verify`, at startup and on every reload (`tests/test_outcome_openings.py`). Verify runners are
+registered in the bindings log and can never be bound.
+The binding rules are checked on every read of the log, not only when `lockrun-risk` writes it. A
+record that breaks one is refused like a broken chain by `verify @runners`, at startup and on every
+reload: a runner bound twice (by name or build_id), a second active primary for a researcher, a
+retired runner back, a verify runner bound, a replace or retire of another researcher's runner, an
+unknown record type (`tests/test_bindings_invariants.py`).
+**Runner keys (claim 9).** Provisioning makes the signer user, its key (OpenSSL 3, Ed25519) and one
+sudo rule for the runner user, and prints the public key; the provisioner (risk's laptop, or the
+operator droplet for nightly runners) reads it over its own SSH, certifies it and records it with the
+binding. The agent asks the signer for each signature; the signer journals each one (fsync) before
+returning it, so a statement whose record the service never wrote is recovered from the runner at
+its next execution (an opening counts in N unless its signed end shows no row reached the job).
+Retiring a runner, the service first records its journal, then asks it for its final statement (the
+last counter it used); a dead runner's is signed by risk. Gates K1 (the key is the signer's alone)
+and K2 (the agent reports its key) are part of `runner-check`.
+**On redeploy:** both checks, the binding rules and every outcome closing an opening, apply to the
+records already on disk. A live service updated to this code refuses at startup any bindings log or
+holdout ledger holding a pre-existing record that breaks either, as it refuses a broken chain, until
+risk acts. Run the new `lockrun-risk verify` on a copy of every log before updating.
 **Shared-runner mode** (`--allow-shared-runners`, development only) is recorded on every execution
 record and in every verdict computed from such an opening; `verify` passes those only as flagged.
 
@@ -240,7 +293,8 @@ dropped), and lifting a locked runner's ruleset to test the layer behind it is n
 
 **A researcher who escapes gVisor** to the runner host, as the runner user in its user namespace,
 **gains:** the rows of their own job (which their code already saw), and a place to persist across
-their own later jobs on that runner until its next rebuild (at most a night, below). They cannot change Podman's configuration or the image:
+their own later jobs on that runner until its next rebuild (at most a night, below). They can also ask the runner's signer to sign statements for their own runner until its rebuild
+(the key itself is the signer user's, 0600, and gate K1 checks it). They cannot change Podman's configuration or the image:
 both are root's (`/etc/lockrun/containers.conf` and `storage.conf`, the read-only store
 `/var/lib/lockrun/images`), not writable by the runner user, which the agent's hello and
 `runner-check` E5 check; each job's writable store is its own and removed with it. They can make
@@ -322,6 +376,9 @@ The agent's launch check read this as the profile it asked for (every field matc
   time; per promote, statistics over all trials at 3 significant digits. Ceiling about 45–50 bits
   per execution, by counting values.
 - **Full disk** halts the service or leaves an unwitnessed line (a false tamper alarm).
+- **Executions the researcher did not request.** Root on the service host can start real executions
+  on a researcher's runner (claim 9 does not cover intent). Researcher-signed execute requests,
+  checked by the agent, are the next item; not built.
 
 ## 6. Where an external reviewer should look first
 
@@ -346,3 +403,13 @@ The agent's launch check read this as the profile it asked for (every field matc
    `evaluate_promotion`), and the promote block reduced to openings with no recorded outcome.
 9. **Fresh-runner procedure:** "rebuilt" is not provable in code; an abandoned verify-fresh claim is
    closed without the verify runner confirming its job stopped.
+10. **Runner signatures (claim 9):**
+    - the signer as its own user behind one sudo rule, and what a runner-user escape can make it sign;
+    - K_ops on the operator droplet, which can certify a runner's key (as root there can already
+      rebuild and log into runners);
+    - that the provisioner reads a new runner's public key on first contact, trusting its host key;
+    - journal recovery, which counts an opening with no signed end in N, so it can only raise N;
+    - the replay's tolerance: a failed run's recorded partial returns must be what its signed weights
+      give through every step the job received but possibly the last;
+    - since 24 October 2026 the service sends a run's params in canonical order, so the stream for a
+      run depends on the ledger alone.

@@ -1,9 +1,81 @@
 # What is verified
 
 For a risk team or an external reviewer. Three lists: what ran on a live deployment, what only the
-test suite shows, and what we cannot verify. Status as of 18 October 2026.
+test suite shows, and what we cannot verify. Status as of 25 October 2026: runner signatures
+(THREAT_MODEL.md, claim 9) ran live on a deployment built from zero that night (below); the rest is as
+of 18 October.
 
 ## 1. Verified on a live deployment
+
+**Runner signatures, from zero (25 October 2026, 00:12–02:31 UTC).** `demo-from-zero --researcher tester
+--holdout demo-1 --anchors-repo giusefrr/lockrun-anchors-demo2 --verdicts-repo giusefrr/lockrun-verdicts-demo2
+--ops` on an empty account: nyc2, `s-1vcpu-2gb-amd`, Ubuntu 24.04 (kernel 6.8.0-142), gVisor `runsc`
+release-20261019.0, runner image `sha256:3de8f4bc…`. 58 steps, the last the cutoff
+(`require-signatures`); then the checks below.
+
+- **Six runners, every gate:** `lockrun-p3-runner-tester`, `-tester2`, `-tester3` and `lockrun-p3-verify-1`
+  (the rebuilt one), `-verify-2`, `-verify-3` each passed every `runner-check` gate, K1 (the key is the
+  signer user's alone, 0600 in 0700, one sudo rule) and K2 (the agent reports its key) included.
+  `check-service` passed with no failure.
+- **Signed executions:** two of tester's executions, one before the cutoff and one after, each with
+  every record signed by the runner that ran it; both fresh verifications matched, signed by their
+  verify runners' own keys.
+- **Two signed verdicts:**
+  - `demo-1` #10 (run `012ca8e812ec`) and #20 (run `702ca16e4d48`), both PASS. sign-verdicts signed
+    each only after the runner checks and the replay of the signed streams against the real holdout.
+  - `verify-verdict` checked each from fresh public clones.
+- **Two `recycle-all` runs from the ops droplet,** before and after the cutoff:
+  - tester → tester2 → tester3 and verify-1 → verify-2 → verify-3, each new runner certified with K_ops;
+  - every retirement carries the runner's own final statement (last counters 4, 4, 2, 2);
+  - `verify @runners` passed after each swap.
+- **After everything:**
+  - `verify @runners` with risk's and ops' public keys: 9 records, every binding rule, counters
+    complete for 6 keys;
+  - `verify demo-1`: 20 records, every execution record carrying its runner's statements;
+  - the risk report: N 4, both verdicts signed, anchors OK.
+- **Not exercised live:** journal recovery ran before each execution and at each retirement and found
+  nothing to recover; the crash it is for has run only in the suite.
+- **What the run found,** each a test-first fix, then the run resumed by hand:
+  - **The cloud firewall reached a new droplet after it booted** (step 15, `check-service` A2): the
+    service's first-boot probe, at 10–19 s of uptime, still reached a public resolver on 443 and 853. The first
+    boot now waits for it and records when it took effect (`525dbfa`); on the six droplets checked after
+    the fix, it took effect 14.4–23.5 s after boot. The service droplet was rebuilt.
+  - **runner-check left its own store** (step 35, H1, verify-1): D4's container is killed at its memory
+    cap on purpose, and Podman's cleanup died with it; the removal's error went to `/dev/null`. It is now
+    shown, and the removal gets up to three rounds (`ccdfa7a`); every runner since passed H1 in the first.
+    verify-1, not yet registered, was rebuilt.
+  - **anchors-deposit misread a deposit that worked** (step 43): it read the unit's last three journal
+    lines, which systemd's own had filled. It now reads the unit's result and that run's own journal
+    (`cbaa7a6`).
+- **Timings:**
+
+  | Step | Time |
+  |---|---|
+  | 1–12: risk-key to the builder destroyed | 4 min 12 s |
+  | the service: create, `provision-service`, `check-service` | 113 s, 434 s, 32 s |
+  | 16–24: issuers, GitHub keys and repositories, `anchors-install` | 42 s |
+  | the primary runner: create, provision, lock, check, register | 60, 342, 11, 170, 7 s |
+  | the verify runner (rebuilt): create, provision, lock, check, register | 51, 344, 13, 174, 10 s |
+  | token, holdout, execute, promote, verify-fresh, promote | 8, 9, 17, 3, 17, 3 s |
+  | deposit, `anchors-verify`, `sign-verdicts`, `verify-verdict` | 7, 4, 6, 1 s |
+  | the ops droplet: create, `provision-ops`, issuers, key, `ops-sync`, authorize, firewalls | 53, 121, 5, 0, 81, 4, 22 s |
+  | `demo-ops-auth` (the operator's token), `recycle-all`, `require-signatures` | 226 s, 1370 s, 4 s |
+  | after the cutoff: `check-service`, `check-runner` (tester2, verify-2) | 33 s, 176 s each |
+  | after the cutoff: execute, promote, verify-fresh, promote, deposit, sign, verify-verdict | 18, 4, 15, 4, 6, 6, 0 s |
+  | after the cutoff: `recycle-all` (tester2 631 s, verify-2 655 s), `verify @runners`, `verify demo-1`, risk-report | 1306, 4, 5, 20 s |
+
+  2 h 19 min in all, with the three fixes and two rebuilds.
+- **A known cost, to reduce:** a signed execution took 10.8 s and 11.5 s from the seal record to the
+  outcome record, on the service's clock, against 8.2 s unsigned on 16 October (17–18 s is
+  `demo-execute`'s wall time, the client's requests and polling included).
+  - Measured on tester3, the signing itself accounts for about 0.75 s: four signatures, each a sudo,
+    a Python start and openssl spawns (the signer's `pub` takes 0.10 s), and three hellos that each
+    ask the signer for its key (0.23 s against 0.17 s without).
+  - The rest is not attributed: that run had another gVisor release (20261005.0) and other droplets.
+  - Locally, on a development runner, signing adds 0.07 s per session; reading the signed end
+    (0.06 s) costs about what the unsigned close did (0.04 s).
+
+The rest of this section is the deployment of 14–16 October 2026.
 
 DigitalOcean nyc2, droplets `s-1vcpu-2gb-amd`, Ubuntu 24.04 (kernel 6.8.0-142), Podman 4.9.3, gVisor
 `runsc` release-20261005.0. 14–16 October 2026. Runner image `sha256:853b792a…` (14 October), then
@@ -182,7 +254,7 @@ The lists below are for the 14–16 October deployment unless they say otherwise
 
 ## 2. Verified by the test suite only
 
-1402 tests (`uv run pytest`, 18 October 2026). The stand-ins:
+1531 tests (`uv run pytest`, 25 October 2026). The stand-ins:
 
 - `tests/fake_podman.py`: Podman, `systemd-run` and `systemctl` on a runner. It models `run`,
   `--rm`, `rm --force`, `container inspect`, `ps`, the job's tmpfs and `podman unshare`, and reports
@@ -206,6 +278,24 @@ and that the 0.8 candidate crosses from PASS to FAIL and never back. Under the 1
 Signed verdicts (`tests/test_sign_verdicts.py`, `test_verify_verdict.py`, `test_verdicts_deploy.py`)
 are tested against an in-process service, local git repositories and the fake ssh.
 
+Runner signatures (claim 9) are tested with the real signer (`lockrun/runner/signer.py`) and the
+real openssl command, against development runners (the process backend):
+
+- **The stand-ins:** the signer runs as the agent's own user, not behind a sudo rule; on macOS the
+  suite needs Homebrew's OpenSSL 3 (the system `openssl` is LibreSSL, without Ed25519), and those
+  tests skip without it. The signer user, the sudo rule and gates K1 and K2 ran live on 25 October
+  (section 1); journal recovery after a crash, risk-signed finals and abandon-claims with risk's
+  signature have run only here.
+- **What the suite shows:** the statement layout, counters and replay protection
+  (`test_runner_statements.py`); keys, certificates, final statements and the cutoff in the bindings
+  log (`test_runner_keys_bindings.py`); the store's refusal of unsigned or forged records
+  (`test_signed_records.py`); the agent's signed opening and session end (`test_agent_signing.py`);
+  the service's checks, journal recovery and abandon-claims with risk's signature
+  (`test_service_signing.py`); risk's verify and sign-verdicts, the replay included
+  (`test_verify_runner_signatures.py`); do.sh from provisioning to the cutoff
+  (`test_deploy_runner_keys.py`); and root's fabrications after the last deposit, refused before and
+  after the next one (`test_assume_breach.py`).
+
 - **The signer:** it refuses on a changed ledger, a recomputation off by 1e-9, or a missing deposit
   (the verdict waits). It signs a verdict with its alert, and signs everything again after a key
   rotation.
@@ -227,6 +317,8 @@ and launch check; every `do.sh` guard and step; the soak and anchor scripts.
 - That GitHub enforces the ruleset, and that DigitalOcean enforces its firewalls as configured.
 - Shared hardware state between jobs (caches, side channels).
 - That a runner was really rebuilt from scratch: provable only by procedure.
+- That a runner's signing key never left the runner (root on it can copy it), and that K_ops stayed on
+  the operator droplet.
 - That risk's signing key stayed on risk's laptop, and when a verdict was signed: `signed_at` and
   the commit dates are the signer's own. Records appended after a compromise of the service host
   are consistent with each other, so a signature cannot tell them from real ones (THREAT_MODEL.md,
