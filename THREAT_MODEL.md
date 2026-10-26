@@ -340,8 +340,9 @@ them as root, through the service. It holds no holdout key and no ledger, it can
 (only `lockrun-risk` on the service writes the bindings log), and every replacement it makes is in
 that log. The service host holds no cloud credential.
 
-**Between runners, the cloud firewall** (runners accept tcp 22 from the service's tag only and send
-nothing) **is verified by configuration and by its propagation behaviour, not by a live probe.**
+**Between runners, the cloud firewall** (runners accept tcp 22 from the service's and the data host's
+tags only and send nothing; their own ruleset admits SSH from the service's address and, for the data
+host, whose address changes at every rebuild, from the VPC range) **is verified by configuration and by its propagation behaviour, not by a live probe.**
 `do.sh check-firewalls` compares the live rules with the generated ones; a runner just retagged
 locked was unreachable from the service until DigitalOcean applied the rule, then reachable
 (2026-10-14). A probe from one runner to another never reaches the cloud firewall: the source's own

@@ -1,18 +1,70 @@
 # What is verified
 
 For a risk team or an external reviewer. Three lists: what ran on a live deployment, what only the
-test suite shows, and what we cannot verify. Status as of 25 October 2026: runner signatures
-(THREAT_MODEL.md, claim 9) ran live on a deployment built from zero that night (below); the data host
-(claim 10: the service never holds the holdout) is in the code and the test suite only, not yet on a
-live deployment; the rest is as of 18 October.
+test suite shows, and what we cannot verify. Status as of 26 October 2026: the data host
+(THREAT_MODEL.md, claim 10: the service never holds the holdout) ran live on a deployment built from
+zero that day, and runner signatures (claim 9) the night before (both below); the rest is as of
+18 October.
 
 ## 1. Verified on a live deployment
 
-**Not yet live: the data host (claim 10).** No deployment has run with a data host. The deployment of
-25 October below predates it: there the service host held the holdout keys and ciphertexts, and the
-code of that day refuses to start on such a state. A fresh deployment (`demo-from-zero`, now with
-`lockrun-p3-data-1` before the runners and `holdout-init` instead of the service's `init`) is the
-next live run.
+**The data host, from zero (26 October 2026, 12:35–16:20 UTC).** `demo-from-zero --researcher tester
+--holdout demo-1 --anchors-repo giusefrr/lockrun-anchors-demo3 --verdicts-repo giusefrr/lockrun-verdicts-demo3
+--ops` on an empty account: nyc2, `s-1vcpu-2gb-amd` for every droplet (`DATA_SIZE` left at `SIZE`),
+Ubuntu 24.04 (kernel 6.8.0-142), gVisor `runsc` release-20261019.0. 67 steps, the last the cutoff; then
+the checks below. The service host held no holdout key, ciphertext, series or weights stream at any
+point.
+
+- **Five bugs only the live run found, each a regression test and a commit, the run resumed at the
+  step that failed:**
+  1. Step 24, `github-verdicts-key`: GitHub puts a deploy key on one repository only, and the laptop's
+     one verdicts key was still on the previous deployment's repository (422 "key is already in
+     use"). Each verdicts repository now has its own key (`d38489f`).
+  2. Step 26, `provision-data`: `No module named 'lockrun.data'`. The wheel's explicit package list
+     lacked the new package; the suite, run from the source tree, could not tell. A test now checks
+     every package and console script against the list (`a57025e`).
+  3. Step 29, `check-data`: two gates failed on a correct host. G1 looked for the drop rule without
+     nft's counter text; G3 counted systemd-resolved's stub, listening on loopback only. Both are now
+     tested on the live host's own ruleset and listeners (`7c7ef34`).
+  4. Step 45, the first execution: "no hello from the runner agent". The runner's host ruleset let
+     only the service in; the data host, which opens each run's session, was in the runner's cloud
+     firewall and authorized_keys but not in its nftables. It now admits SSH from the VPC range too,
+     as the data host's key entry does (`02c1288`). Refused before opening, as designed: an
+     `execution_refused` record, no trial.
+  5. Step 65, the first `recycle-all` from the ops droplet: the ops droplet lacked the data host's
+     public SSH key, which every new runner trusts as its only exec key (`104172b`).
+- **Two handovers with a real holdout:** `recycle-data` from the laptop, data-1 → data-2 (479 s, after
+  `check-data` rightly refused data-1, whose installed checks predated fix 4) and data-2 → data-3
+  (559 s). Each time the old data host encrypted demo-1, its series and weights streams and the
+  runners' SSH key to the new one's K_risk-certified handover key, signed its handover and final
+  statements, and was destroyed only after the new one passed `check-data` and `verify @runners`.
+  No runner changed.
+- **The laptop's route to the data host, through the service as a jump host:** `holdout-init` encrypted
+  demo-1 on the laptop and installed it under K_risk's signature (11 s); `verify demo-1 --holdout-file
+  --data-host` on a copy of the ledgers fetched every weights stream from data-3 under K_risk-signed
+  requests: 4 executions' signed streams replay to their outcomes, 2 promotes' detector flags
+  recomputed from the replayed series.
+- **Executions and verdicts:** two of tester's executions, before and after the cutoff, each returned
+  clean (Sharpe 0.529) and matched on a fresh verify runner; both promotes took the data host's
+  signed detector answer. sign-verdicts signed demo-1 #14 and #24 (PASS) after the full replay through
+  the data host, 0 refused; `verify-verdict` checked both from fresh public clones.
+- **Every gate on every host:** `check-data` on data-1 (twice rebuilt), data-2 and data-3; `check-runner`
+  on six runners (tester2, tester3, verify-2, verify-3 and the two the ruleset fix replaced), F4 (two
+  restricted keys) and F5 (only the data host's key starts a job) included; `check-service` with E7
+  and E8; `check-firewalls`. No failure after the fixes.
+- **Recycles:** `recycle-all` from the ops droplet rebuilt runners only (1270 s: tester2 → tester3 in
+  604 s, verify-2 → verify-3 in 639 s, each certified with K_ops); `verify @runners` afterwards: 12
+  records, counters complete for 6 runner keys and 3 data host keys. risk-report written.
+- **Execution time on the service's clock** (opening record to outcome record): 6.9 s and 6.4 s per
+  execution (two runs), 3.3 s and 3.2 s per fresh verification (one run); 8.2 s before the data host.
+- **Timings:** `provision-data` 312–329 s, `check-data` 16–23 s, `register-data` 20 s, `provision-runner`
+  332–357 s, `check-runner` 175–177 s, `holdout-init` 11 s, `sign-verdicts` 10–12 s, `recycle-data`
+  479 and 559 s.
+- **Not explained:** one runner recycle failed when its check session to the new runner, relayed by
+  the service, broke after hanging about 30 minutes (`Broken pipe`); the service logged no
+  disconnect. With one API connection timeout earlier, both from the same laptop, it reads as that
+  network dropping long-lived sessions. The recycle left the old runner in place and destroyed the
+  new one, as designed; the retry passed.
 
 **Runner signatures, from zero (25 October 2026, 00:12–02:31 UTC).** `demo-from-zero --researcher tester
 --holdout demo-1 --anchors-repo giusefrr/lockrun-anchors-demo2 --verdicts-repo giusefrr/lockrun-verdicts-demo2
@@ -307,10 +359,11 @@ The data host (claim 10) is tested in process: a development data host in a thre
 process (`transport: inproc`), with the real signer and openssl where it signs, against development
 runners (the process backend):
 
-- **The stand-ins:** no separate host, no sshd and no `lockrun-data` user: the forced command, its
-  firewalls and host ruleset, `data-provision.sh` and `data-check.sh` have run only under `bash -n`
-  and the fake ssh. The runners' two keys and `exec_keys` are checked against a stand-in for sshd's
-  ExposeAuthInfo.
+- **The stand-ins:** no separate host, no sshd and no `lockrun-data` user: in the suite, the forced
+  command, its firewalls and host ruleset, `data-provision.sh` and `data-check.sh` run under `bash -n`
+  and the fake ssh, and the runners' two keys and `exec_keys` against a stand-in for sshd's
+  ExposeAuthInfo. All of them ran live on 26 October (section 1); the gates' ruleset and listener
+  checks are tested on that live host's own output.
 - **What the suite shows:** the protocol and its refusals (`test_data_host.py`); that the service
   holds no key, ciphertext, series or weights after executions, and refuses a state with a key
   (`test_service_holds_no_holdout.py`); holdout-init on the laptop and the K_risk-signed install
