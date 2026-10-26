@@ -4,8 +4,10 @@ lockrun counts the backtests run against a protected holdout, so a strategy's De
 Ratio (DSR) uses the true number of trials N. Status: prototype. **The threat:** a researcher with
 root on their own machine wants a better-looking backtest. They peek at the holdout before
 committing, run many variants and drop the failures, or rewrite the ledger with a recomputed hash
-chain to lower N. In **service mode** a risk-owned service holds the key, the ledgers and the
-execution: it runs sealed code on runners and records every opening. This document states what the
+chain to lower N. In **service mode** risk-owned hosts hold the holdout and the ledgers: the
+**data host** alone holds each holdout's key and ciphertext, decrypts and streams the rows to the
+runners; the **service** holds the ledgers, runs nothing but the API and the bookkeeping, and records
+every opening before any row is sent. This document states what the
 code enforces as of this revision; `README.md` has the detail, `RUNNER_PERSISTENCE.md` the runner
 inventory, and `docs/WHAT_IS_VERIFIED.md` what ran on a live deployment, what only the test suite
 shows, and what we cannot verify.
@@ -15,6 +17,7 @@ shows, and what we cannot verify.
 1. **Every opening is logged first.** Before any holdout row reaches strategy code, the service
    appends a `holdout_access` record to that holdout's ledger: run, researcher, the runner's
    identity, the bindings-log head it was dispatched under, and whether it ran in shared-runner mode.
+   The data host sends no row of a run until the service has recorded it ("go").
 2. **N comes from the ledger, and every opening counts.** Each execution that opens the holdout is
    a trial, whatever its outcome, including one abandoned after a crash. A researcher's execution
    runs twice; any disagreement rejects it. A failure tells the researcher only "execution failed".
@@ -53,18 +56,37 @@ shows, and what we cannot verify.
    a key's counters across all ledgers. Risk's `verify` and `sign-verdicts` replay the signed
    streams with the plaintext holdout: the rows were the holdout's and the recorded returns are what
    the signed weights give.
+10. **The service host never holds the holdout.** No key, ciphertext, row, returns series or weights
+    stream reaches it (since 25 October 2026); a service whose state holds a key or a ciphertext
+    refuses to start. Risk encrypts each holdout on the laptop and installs it on the data host under
+    a K_risk signature (`do.sh holdout-init`). For each run the data host signs its opening (the
+    plaintext's hash, the plan's steps, the run's status and row counts) and, per execution, the
+    outcome's summaries (T, moments and returns hash; for a failed run its length k and zero-padded
+    Sharpe); for each promote it runs the dummy detector on the series the trial structure names and
+    signs its flags. Only K_risk certifies its keys, from the laptop (the `data_host` bindings record,
+    the data cutoff, marked in every holdout's ledger; K_ops certifies runners only). From the cutoff
+    a record without the data host's valid statement, a statement that is not its record's, an
+    outcome other than the one its signed runs give, run hashes other than the runner's session_end,
+    or a gap in the data host's counters is a chain error. The data host holds each holdout in
+    memory, so its size has an explicit limit (1 GiB by default, set per deployment): a larger one is
+    refused at `holdout-init`, before anything is written, and by the data host at install.
 
 ## 2. Actors, secrets and trust boundaries
 
 **Researcher:** untrusted, root on their own machine. Holds a bearer token (static, revocable by
 risk), the certificate pin and a git repository. **Risk:** trusted, root on the service and runner
-hosts. **Service:** the only holder of secrets. **Runner:** risk-owned, one per researcher, runs
-that researcher's strategies; state that survives a job is listed in `RUNNER_PERSISTENCE.md`.
+hosts. **Service:** holds the ledgers and tokens, never the holdout (claim 10). **Data host:**
+risk-owned, holds every holdout's key and ciphertext and every series and weights stream; runs no
+researcher code. **Runner:** risk-owned, one per researcher, runs that researcher's strategies;
+state that survives a job is listed in `RUNNER_PERSISTENCE.md`.
 
 | Secret | Where it lives | Who can access it |
 |--|------|------|
-| Holdout key | Service host, 0600, in the service user's 0700 state directory | Root and the service user. Not researchers, runners or the sandbox |
-| Holdout data | Decrypted in memory per execution on the service; streamed step by step over SSH to the job | Root on the service host; root on the job's runner (that job's rows). Strategy code sees every row by the end of a run |
+| Holdout key and ciphertext | The data host, `/var/lib/lockrun-data/state/holdouts/<id>/`, 0600 in 0700, user `lockrun-data`; risk's laptop keeps the bundle (key, ciphertext, init record) as its backup | Root and `lockrun-data` on the data host; risk. Never the service host, the runners or the sandbox |
+| Holdout data | Decrypted in memory per execution on the data host; streamed step by step over SSH to the job | Root on the data host; root on the job's runner (that job's rows). Strategy code sees every row by the end of a run |
+| Returns series and weights streams | The data host, keyed by sha256; the ledger holds their hashes and summaries only | Root on the data host; risk's replay, under a K_risk-signed fetch |
+| Data host signing key (Ed25519), handover key (X25519) | The data host: the signing key `lockrun-signer`'s as on a runner; the handover key `lockrun-data`'s, 0600; new with every rebuild | Root on the data host. Both certified by K_risk alone, recorded in the bindings log; a certificate by any other key is a violation |
+| The runners' job key (SSH) | The data host, `lockrun-data`'s, 0600; handed over to the next data host at each rebuild | Root on the data host. The only key a runner lets start a job (`exec_keys`) |
 | Ledgers, bindings log, witness logs | Service host: hash-chained JSONL, witness logs `chattr +a` | Researchers read (head, count) through the API. Root can rewrite all of them (§3) |
 | Risk's verdict-signing key (Ed25519) | Risk's laptop, `deploy/p3/out/risk-key/`, 0600 (later an HSM) | Risk. Never the service host, the runners or the operator droplet (§3a) |
 | Verdicts deploy key | Risk's laptop, same directory | Risk: write access to the verdicts repository only |
@@ -73,16 +95,24 @@ that researcher's strategies; state that survives a job is listed in `RUNNER_PER
 
 **Boundaries.** *Researcher → service:* TLS 1.3 with a pinned certificate, a bearer token, seven
 JSON endpoints, 64 KiB bodies, daily per-researcher quotas, an allowlist of repository URLs per
-researcher. *Service → runner:* SSH with a pinned host key and a forced command; the runner holds no
-credential to the service. Before anything is decrypted the runner's build_id and image ID are checked
-and its CPU flags reported, and its build_id must be the one bound to the researcher.
+researcher. *Service → data host:* SSH from the service's VPC address only, forced to `lockrun-data`,
+one request per session (hello, run, stats, journal, retire; install and fetch need K_risk's
+signature; handover and receive need certified keys). *Data host → runner:* SSH with a pinned host
+key, the data host's key, the only one the agent lets start a job. *Service → runner:* SSH, forced,
+limited to identify, journal and retire. The runner holds no credential to either. Before anything
+is decrypted the runner's build_id and image ID are checked by the service and its certified key by
+the data host, and its build_id must be the one bound to the researcher.
 
 ## 3. Root on the service host
 
-**Can, from the moment of compromise onward:** decrypt every holdout; read and forge any record;
-issue tokens; bind or rebind runners by writing the bindings log; make the service lie in every
-answer; stop exporting anchors (visible as a cadence gap); rewrite the local ledgers, witness logs
-and bindings log together, with recomputed hashes.
+**Can, from the moment of compromise onward:** read and forge any record; issue tokens; bind or
+rebind runners by writing the bindings log; make the service lie in every answer; stop exporting
+anchors (visible as a cadence gap); rewrite the local ledgers, witness logs and bindings log
+together, with recomputed hashes; ask the data host for genuine executions and promote statistics,
+as the service does. **Cannot, since 25 October 2026:** decrypt a holdout or read its rows, returns
+or weights (none is on the host; the data host fetches nothing to the service's key, installs only
+under K_risk, and hands over only to a certified key); write an execution or promote record the data
+host did not sign, after the data cutoff (claim 10).
 
 **Cannot, from the cutoff on (claim 9):** write an execution record no runner signed. A fabricated
 opening or outcome, or one whose signature is forged, is a chain error before the next deposit and
@@ -114,6 +144,7 @@ service host's own.
 | Opening removed, its outcome kept, chain and witness rewritten | refused (does not extend the head it verified) | `verify` fails: the outcome closes no opening | detected |
 | An execution record without its runner's signature, or with a forged one (after the cutoff) | refused at write | `verify` fails: the statement is missing or does not verify | (anchors it at the next deposit: still fails) |
 | A signed execution record removed, chain and witness rewritten | | `verify @runners` fails: a gap in the runner key's counters (the tail: at its next statement or its final) | detected |
+| A summary, an outcome or a promote's detector flags rewritten (after the data cutoff) | | `verify` fails: the data host's statement is not the record's, or the outcome is not the one its signed runs give | (anchors it: still fails) |
 | Bindings record appended that breaks a binding rule (a runner moved, a second runner for a researcher) | refused on the next read | detected: `verify @runners` names the record and the rule | |
 | Verdict computed on a ledger later cut and re-anchored | | | `verify --verdict` fails |
 
@@ -132,8 +163,8 @@ service host's own.
 The deposit anchors every promote record and every bindings record at its own count, so a
 verdict's anchor line names exactly its record hash.
 
-**What sign-verdicts checks before signing.** On a copy of the service's ledgers, witness logs and
-blobs (read under the append lock), it:
+**What sign-verdicts checks before signing.** On a copy of the service's ledgers and witness logs
+(read under the append lock), it:
 
 - checks every chain it signs from against its witness log and against every anchor ever
   deposited, in an anchors history with no tamper alarm;
@@ -141,7 +172,13 @@ blobs (read under the append lock), it:
 - recomputes the verdict from the records before it, with the service's own code;
 - checks the runners' records (claim 9) with risk's key and its own copy of K_ops' public key: every
   certificate, every statement, each key's counters, and, for each holdout with signed outcomes, the
-  streams replayed with the plaintext risk kept (`--holdout-file`, then required).
+  streams replayed with the plaintext risk kept (`--holdout-file`, then required), the weights
+  fetched from the data host under a K_risk-signed request, through the service as a jump host;
+- checks the data host's statements (claim 10) the same way: every opening, outcome and promote,
+  its counters, and each promote's detector answer against the trial structure it recomputes; then
+  recomputes the detector's flags from the series its own replay gives (plaintext and runner-signed
+  weights, each matching the hash the record names): flags other than the data host signed are a
+  chain error, and nothing is signed.
 
 The verdict, N and threshold must be identical, the other fields too, and numbers must agree
 within 1e-12. It stops, signing nothing, on anything else. The signature covers the promote record
@@ -190,6 +227,26 @@ anchors) or risk's laptop (the verdicts) can write.
 - **Compromise:** the old key's signatures can no longer be told from forgeries, because
   `signed_at` is the signer's own claim. Re-signing with the new key is the remedy. The verifier
   accepts the key it is given, so a verdict is then checked against the new key.
+
+## 3b. Root on the data host
+
+**Can, until the next rebuild:** decrypt every holdout and read every series and weights stream;
+sign anything as the data host (summaries, detector flags, openings), until its final statement at
+the handover; refuse or delay executions and promotes (the retryable 409). Its only routes out are
+its answers to the service and its sessions to runners (cloud firewall and host ruleset: SSH in from
+the service only, out to the runners only), so a compromised data host can leak the plaintext to a
+compromised service through its answers. **Cannot:** forge a runner's statements, so risk's replay
+(with the plaintext and the runner-signed weights) refuses altered rows and returns it signed, and
+detector flags other than the replayed series give (sign-verdicts and `verify --holdout-file`
+recompute them); make
+risk's laptop install or fetch anything (both need K_risk); hand the holdouts to a key risk did not
+certify. Root on the operator droplet cannot either: K_ops certifies runners, never a data host or
+its handover key, and `verify @runners` refuses a data_host record certified otherwise. **Weekly
+rebuild, by risk:** `do.sh recycle-data`, from risk's laptop, on risk's approval: the old data host
+hands everything over, encrypted to the new one's K_risk-certified X25519 key, then signs its final
+statement; the bindings record carries both. An attacker on the data host persists at most until
+that rebuild: `check-service` fails (E8) once the data host is older than 8 days, and the nightly
+recycle reports it due from 7.
 
 ## 4. Runners
 
@@ -303,7 +360,7 @@ runner as well, they can also alter image layers under the pinned ID (the launch
 read layer content) and forge the agent's hello and launch profile, so the recorded profile hash
 proves nothing for that runner. **They do not gain:** the
 holdout key or any other holdout's rows; other researchers' jobs (separate runners); any credential
-to the service (SSH runs service → runner only, under a forced command); a way to change N or the
+to the service or the data host (SSH runs only to the runner, under a forced command); a way to change N or the
 ledgers (the opening is recorded before any row is sent); a PASS, which needs a bit-identical rerun
 on a fresh runner built from scratch.
 
@@ -377,8 +434,11 @@ The agent's launch check read this as the profile it asked for (every field matc
   per execution, by counting values.
 - **Full disk** halts the service or leaves an unwitnessed line (a false tamper alarm).
 - **Executions the researcher did not request.** Root on the service host can start real executions
-  on a researcher's runner (claim 9 does not cover intent). Researcher-signed execute requests,
-  checked by the agent, are the next item; not built.
+  on a researcher's runner, through the data host (claims 9 and 10 do not cover intent).
+  Researcher-signed execute requests, checked by the data host, are the next item; not built.
+- **Refused executions are shown done 360 s after their start** (`MIN_REFUSED_DONE_S`: the service's
+  identify, the data host's deadline for its opening and the closes). A runner journal recovery after
+  a crash (an extra identify-length session) is not inside that bound.
 
 ## 6. Where an external reviewer should look first
 
@@ -413,3 +473,9 @@ The agent's launch check read this as the profile it asked for (every field matc
       give through every step the job received but possibly the last;
     - since 24 October 2026 the service sends a run's params in canonical order, so the stream for a
       run depends on the ledger alone.
+11. **The data host (claim 10, §3b):** the forced command and its one-request protocol
+    (`lockrun/data/host.py`); the "opened"/"go" handshake that keeps rows behind the opening record;
+    what the summaries reveal (T, moments, hashes, k, the zero-padded Sharpe: no more than before);
+    the K_risk-signed install and fetch, and their one-hour not_after window; the handover's
+    encryption (X25519, HKDF-SHA256, AES-256-GCM) and that only K_risk certifies its key; that the data host's
+    SSH key to runners survives rebuilds (handed over) while its signing key does not.

@@ -2,10 +2,17 @@
 
 For a risk team or an external reviewer. Three lists: what ran on a live deployment, what only the
 test suite shows, and what we cannot verify. Status as of 25 October 2026: runner signatures
-(THREAT_MODEL.md, claim 9) ran live on a deployment built from zero that night (below); the rest is as
-of 18 October.
+(THREAT_MODEL.md, claim 9) ran live on a deployment built from zero that night (below); the data host
+(claim 10: the service never holds the holdout) is in the code and the test suite only, not yet on a
+live deployment; the rest is as of 18 October.
 
 ## 1. Verified on a live deployment
+
+**Not yet live: the data host (claim 10).** No deployment has run with a data host. The deployment of
+25 October below predates it: there the service host held the holdout keys and ciphertexts, and the
+code of that day refuses to start on such a state. A fresh deployment (`demo-from-zero`, now with
+`lockrun-p3-data-1` before the runners and `holdout-init` instead of the service's `init`) is the
+next live run.
 
 **Runner signatures, from zero (25 October 2026, 00:12–02:31 UTC).** `demo-from-zero --researcher tester
 --holdout demo-1 --anchors-repo giusefrr/lockrun-anchors-demo2 --verdicts-repo giusefrr/lockrun-verdicts-demo2
@@ -254,7 +261,7 @@ The lists below are for the 14–16 October deployment unless they say otherwise
 
 ## 2. Verified by the test suite only
 
-1531 tests (`uv run pytest`, 25 October 2026). The stand-ins:
+1642 tests (`uv run pytest`, 25 October 2026). The stand-ins:
 
 - `tests/fake_podman.py`: Podman, `systemd-run` and `systemctl` on a runner. It models `run`,
   `--rm`, `rm --force`, `container inspect`, `ps`, the job's tmpfs and `podman unshare`, and reports
@@ -296,6 +303,22 @@ real openssl command, against development runners (the process backend):
   (`test_deploy_runner_keys.py`); and root's fabrications after the last deposit, refused before and
   after the next one (`test_assume_breach.py`).
 
+The data host (claim 10) is tested in process: a development data host in a thread of the test
+process (`transport: inproc`), with the real signer and openssl where it signs, against development
+runners (the process backend):
+
+- **The stand-ins:** no separate host, no sshd and no `lockrun-data` user: the forced command, its
+  firewalls and host ruleset, `data-provision.sh` and `data-check.sh` have run only under `bash -n`
+  and the fake ssh. The runners' two keys and `exec_keys` are checked against a stand-in for sshd's
+  ExposeAuthInfo.
+- **What the suite shows:** the protocol and its refusals (`test_data_host.py`); that the service
+  holds no key, ciphertext, series or weights after executions, and refuses a state with a key
+  (`test_service_holds_no_holdout.py`); holdout-init on the laptop and the K_risk-signed install
+  (`test_holdout_init_laptop.py`); the data host's statements in every record, risk's checks of them,
+  journal recovery, recomputed promotes and the K_risk-signed fetch for the replay
+  (`test_data_signatures.py`); the handover at a rebuild (`test_data_handover.py`); the refusal-time
+  bound (`test_refusal_time_bound.py`); do.sh's data role, firewalls and steps (`test_deploy_data.py`).
+
 - **The signer:** it refuses on a changed ledger, a recomputation off by 1e-9, or a missing deposit
   (the verdict waits). It signs a verdict with its alert, and signs everything again after a key
   rotation.
@@ -319,6 +342,10 @@ and launch check; every `do.sh` guard and step; the soak and anchor scripts.
 - That a runner was really rebuilt from scratch: provable only by procedure.
 - That a runner's signing key never left the runner (root on it can copy it), and that K_ops stayed on
   the operator droplet.
+- What a compromised data host signs before risk next replays: its summaries and detector flags
+  are checked only at sign-verdicts and `verify --holdout-file`, which recompute both from the
+  plaintext and the runner-signed weights.
+- That the plaintext never left the data host while it was compromised.
 - That risk's signing key stayed on risk's laptop, and when a verdict was signed: `signed_at` and
   the commit dates are the signer's own. Records appended after a compromise of the service host
   are consistent with each other, so a signature cannot tell them from real ones (THREAT_MODEL.md,
