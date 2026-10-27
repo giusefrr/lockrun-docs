@@ -4,7 +4,9 @@ For a risk team or an external reviewer. Three lists: what ran on a live deploym
 test suite shows, and what we cannot verify. Status as of 27 October 2026: researcher-signed
 requests (plan item 1, THREAT_MODEL.md §2 and §3) ran live on a deployment built from zero that
 night; the data host (claim 10: the service never holds the holdout) the day before, and runner
-signatures (claim 9) the night before that (all below); the rest is as of 18 October.
+signatures (claim 9) the night before that (all below); the rest is as of 18 October. The
+adversarial tests of plan item 2 and their four fixes (section 2, 27 October) have run only in the
+suite: the live deployment runs code from before them.
 
 ## 1. Verified on a live deployment
 
@@ -374,7 +376,7 @@ The lists below are for the 14–16 October deployment unless they say otherwise
 
 ## 2. Verified by the test suite only
 
-1761 tests (`uv run pytest`, 27 October 2026). The stand-ins:
+1915 tests (`uv run pytest`, 27 October 2026). The stand-ins:
 
 - `tests/fake_podman.py`: Podman, `systemd-run` and `systemctl` on a runner. It models `run`,
   `--rm`, `rm --force`, `container inspect`, `ps`, the job's tmpfs and `podman unshare`, and reports
@@ -397,6 +399,49 @@ and that the 0.8 candidate crosses from PASS to FAIL and never back. Under the 1
 
 Signed verdicts (`tests/test_sign_verdicts.py`, `test_verify_verdict.py`, `test_verdicts_deploy.py`)
 are tested against an in-process service, local git repositories and the fake ssh.
+
+**Adversarial tests (plan item 2, 27 October 2026): 153 tests, `tests/test_crypto_*.py`.** Each
+builds a tampered copy of one honest deployment (`tests/crypto_world.py`: two holdouts, a signing
+data host, two researchers with certified keys, every cutoff, executions, a promote PASS after a
+fresh verification, anchors deposited twice, the verdict signed and published). Root's tampering is
+consistent: every later hash recomputed and the witness log rewritten. Each test expects the right
+check to refuse it: `lockrun-risk verify`, `anchor verify-repo`, `sign-verdicts`,
+`lockrun-verify-verdict`, or the service at startup and on reload. Eight attacks:
+
+1. **Replay of records** (`test_crypto_replay.py`): a record copied into another log, or again
+   into its own. *Found and fixed* (`710a8e7`): a record of a type foreign to its log, or of a type
+   nothing writes, was accepted. Each log now has an explicit set of record types, and anything
+   else is a chain error for `verify`, the store, startup and reload.
+2. **Rollback between anchors** (`test_crypto_rollback.py`): held.
+3. **Truncation and reordering** (`test_crypto_truncation.py`, `test_crypto_references.py`).
+   *Found and fixed* (`9399882`): a record naming a record that is not earlier in its chain (a
+   forward or missing reference), and witness entries out of order, were accepted. Every reference
+   from one record to another (each record type audited, each reference pinned by a test) must
+   point earlier; witness counts must strictly increase.
+4. **A signed verdict with a field changed, its signature kept** (`test_crypto_verdict_fields.py`):
+   held.
+5. **Canonicalization** (`test_crypto_canonical.py`). *Found and fixed* (`2c70283`, `a0bb40a`): two
+   values that read the same (a string in NFC and in NFD, 1 and 1.0) were accepted as different
+   records. From a cutoff (`require-canonical-values`, marked in every ledger) a non-NFC string or
+   key, or an integral float, is refused at write and on read. The store writes canonical values, and
+   the researcher's client normalizes seal params, but the API refuses a raw form. Records from
+   before the cutoff are read as written. The requirement holds from the marker or from a record
+   naming a bindings head with the cutoff, so removing the marker does not switch it off.
+6. **A missing or extra anchor** (`test_crypto_anchors.py`): held. A history force-pushed with the
+   file unchanged passed `verify-repo`, relying on the git host's ruleset. It is now refused by
+   risk's pins of both repositories (`6a847b8`, section 3).
+7. **Key confusion** (`test_crypto_keys.py`): held. Signing domains are distinct and none is a
+   prefix of another; only risk certifies a data host or a researcher key.
+8. **Downgrade** (`test_crypto_downgrade.py`). *Found and fixed* (`e180548`): with the data host's
+   marker removed from a holdout's ledger where nothing after it was renamed, a promote without the
+   data host's statement was accepted. Each signature requirement (runner, data host, researcher)
+   now holds from the ledger's marker or from a record naming a bindings head with the cutoff,
+   whichever comes first, and stays in force for every later record. The store checks on every
+   read, at startup and on reload, that the signatures are present. Whether they verify is checked
+   at append and by `verify` and `sign-verdicts`. And a record naming a head with a cutoff whose
+   marker (any of the four, canonical values included) does not come before it in its ledger refuses
+   the whole ledger ("the ledger's marker is missing"). This also catches a record placed between
+   the removed marker and the first record that names a head, such as an NFD seal.
 
 Runner signatures (claim 9) are tested with the real signer (`lockrun/runner/signer.py`) and the
 real openssl command, against development runners (the process backend):
@@ -460,8 +505,10 @@ and launch check; every `do.sh` guard and step; the soak and anchor scripts.
 - The cloud firewall between runners as a live probe: the source runner's own ruleset drops the probe
   before it reaches the cloud firewall (THREAT_MODEL.md, section 4).
 - Root on a compromised host: it can forge the agent's hello and launch profile, rewrite a build_id
-  file, and append to the anchors repository (not rewrite it, if GitHub enforces the ruleset).
-- That GitHub enforces the ruleset, and that DigitalOcean enforces its firewalls as configured.
+  file, and append to the anchors repository. A rewrite of it, or of the verdicts repository, is
+  refused by risk's pins (`out/anchors.pin`, `out/verdicts.pin`) whether or not GitHub enforces the
+  ruleset. Commits pushed after risk's last check can still be replaced before its next one.
+- That DigitalOcean enforces its firewalls as configured.
 - Shared hardware state between jobs (caches, side channels).
 - That a runner was really rebuilt from scratch: provable only by procedure.
 - That a runner's signing key never left the runner (root on it can copy it), and that K_ops stayed on

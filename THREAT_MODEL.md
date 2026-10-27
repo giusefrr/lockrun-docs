@@ -155,7 +155,12 @@ execution the researcher asked for, or not run it at all.
 
 **Cannot:** change what was deposited off-host. Anchors (count, head, time, chained) are pushed to a
 git repository whose `main` the git host protects; `anchor verify-repo` flags any commit that does
-more than append, and checks every anchor ever pushed against the ledger. History up to the last
+more than append, and checks every anchor ever pushed against the ledger. The git host's ruleset is
+not relied on: risk keeps a pin of the last verified commit of each public repository on the laptop
+(`out/anchors.pin`, `out/verdicts.pin`); `verify-repo --pin` and `sign-verdicts` refuse a fresh clone
+whose history no longer contains it as rewritten (a force push, even one that keeps the file
+unchanged), and a pin only advances to a descendant; commits pushed after risk's last check can
+still be replaced before its next one. History up to the last
 deposited anchor therefore cannot be rewritten undetected; a verdict whose `computed_from` heads lie
 inside the anchored history can be checked by risk with `lockrun-risk verify --anchors --verdict` on a
 copy of the ledger. **Immutable off-host storage protects the past, not the future:** nothing here
@@ -176,6 +181,11 @@ service host's own.
 | A signed execution record removed, chain and witness rewritten | | `verify @runners` fails: a gap in the runner key's counters (the tail: at its next statement or its final) | detected |
 | A summary, an outcome or a promote's detector flags rewritten (after the data cutoff) | | `verify` fails: the data host's statement is not the record's, or the outcome is not the one its signed runs give | (anchors it: still fails) |
 | Bindings record appended that breaks a binding rule (a runner moved, a second runner for a researcher) | refused on the next read | detected: `verify @runners` names the record and the rule | |
+| A record of a type foreign to its log (a bindings record in a holdout's ledger, a holdout record in the bindings log) or of a type nothing writes | refused at write and on the next read | detected: `verify` names the record and the log's allowed types | |
+| A record naming a record that is not earlier in its chain (a promote before its fresh verification, a claim before its request, a run id with no seal before it, a marker or opening naming a bindings head the log does not have), records reordered with every hash recomputed | refused at write and on the next read | detected: `verify` names the record and the reference | |
+| Witness entries reordered or repeated | refused on the next read | detected: the counts must strictly increase | |
+| A record written another way that reads the same: key order, whitespace, escapes, float spelling, CRLF, a duplicated key, NaN or Infinity; after the canonical-values cutoff (`require_canonical_values`, marked in every ledger; in force from the marker or from a record naming a bindings head with the cutoff, whichever comes first, and for every later record, so removing the marker does not switch it off), a string or key not in NFC or an integral float | refused at write (the store writes canonical values; the client normalizes seal params, the API refuses the raw form) and on the next read | detected: the line is not canonical, or the value is named | |
+| A cutoff marker removed from a holdout's ledger (runner, data host or researchers'), then a record without the signature it requires: each requirement holds from the ledger's marker or from a record naming a bindings head with the cutoff, whichever comes first, and stays in force for every later record whatever head it names. A record naming a head with a cutoff whose marker does not come before it in its ledger (any of the four, canonical values included) refuses the whole ledger: "the ledger's marker is missing" | refused at write and on the next read (the signature must be there; the whole ledger once the marker is shown missing) | detected: `verify` names the record and the missing statement or request | (anchors it: still fails) |
 | An opening without its signed request, or with one forged, for another execution, or used before (after the researchers' cutoff) | refused at write | `verify` fails: the request is missing or does not check out; `verify @runners`: a nonce used twice | (anchors it: still fails) |
 | Verdict computed on a ledger later cut and re-anchored | | | `verify --verdict` fails |
 
@@ -513,3 +523,14 @@ The agent's launch check read this as the profile it asked for (every field matc
     the researcher sent, for that one execution; the nonce stores (the data host's, handed over at
     each rebuild; the agent's, its signer's journal); and the researcher's key as a PEM file on their
     own machine (§5).
+13. **Adversarial tests (plan item 2, `tests/test_crypto_*.py`, docs/WHAT_IS_VERIFIED.md §2):**
+    eight attacks on one honest deployment, each tampered consistently by root. Four were found
+    and fixed:
+    - foreign record types;
+    - references to records not earlier in the chain, and witness entries out of order;
+    - two encodings of one value (canonical values from a cutoff);
+    - a cutoff marker removed.
+    Rewritten repository histories are now refused by risk's pins, not by the git host. Worth a
+    look: `lockrun/service/cutoffs.py`, where a requirement starts and that it never stops. The
+    store checks only that signatures are present on read; their verification runs at append and in
+    risk's `verify`.
