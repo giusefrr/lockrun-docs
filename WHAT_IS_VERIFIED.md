@@ -374,7 +374,7 @@ The lists below are for the 14–16 October deployment unless they say otherwise
 
 ## 2. Verified by the test suite only
 
-1760 tests (`uv run pytest`, 27 October 2026). The stand-ins:
+1761 tests (`uv run pytest`, 27 October 2026). The stand-ins:
 
 - `tests/fake_podman.py`: Podman, `systemd-run` and `systemctl` on a runner. It models `run`,
   `--rm`, `rm --force`, `container inspect`, `ps`, the job's tmpfs and `podman unshare`, and reports

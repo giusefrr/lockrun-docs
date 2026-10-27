@@ -26,7 +26,8 @@ shows, and what we cannot verify.
    and counts in the execution quota. A request refused at the API (a wrong key, a replayed or
    malformed request, none after the cutoff) opened and queued nothing: it is not recorded and does
    not count; it goes to the rejection log with its reason, and more than 3 for one researcher in
-   24 hours (counted since the service started) raise an ALERT, a leaked token or a broken client.
+   24 hours (counted in the service state, across restarts) raise an ALERT, a leaked token or a
+   broken client.
    Each researcher has at most one execution in flight, and its slot frees only once the runner
    confirms the job stopped.
 3. **The sealed code is the code that runs, in a launch the agent verifies.** The service stores a
@@ -510,6 +511,5 @@ The agent's launch check read this as the profile it asked for (every field matc
     SSH key to runners survives rebuilds (handed over) while its signing key does not.
 12. **Signed requests (§2, §3):** the 15-minute window in which root on the service can use a request
     the researcher sent, for that one execution; the nonce stores (the data host's, handed over at
-    each rebuild; the agent's, its signer's journal); that requests refused at the API are counted in
-    memory only, so a restart resets the `request_refusals` alert's 24-hour count; and the
-    researcher's key as a PEM file on their own machine (§5).
+    each rebuild; the agent's, its signer's journal); and the researcher's key as a PEM file on their
+    own machine (§5).
