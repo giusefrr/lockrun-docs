@@ -1,12 +1,73 @@
 # What is verified
 
 For a risk team or an external reviewer. Three lists: what ran on a live deployment, what only the
-test suite shows, and what we cannot verify. Status as of 26 October 2026: the data host
-(THREAT_MODEL.md, claim 10: the service never holds the holdout) ran live on a deployment built from
-zero that day, and runner signatures (claim 9) the night before (both below); the rest is as of
-18 October.
+test suite shows, and what we cannot verify. Status as of 27 October 2026: researcher-signed
+requests (plan item 1, THREAT_MODEL.md §2 and §3) ran live on a deployment built from zero that
+night; the data host (claim 10: the service never holds the holdout) the day before, and runner
+signatures (claim 9) the night before that (all below); the rest is as of 18 October.
 
 ## 1. Verified on a live deployment
+
+**Researcher-signed requests, from zero (26–27 October 2026, 23:22–02:13 UTC).** `demo-from-zero
+--researcher tester --holdout demo-1 --anchors-repo giusefrr/lockrun-anchors-demo4 --verdicts-repo
+giusefrr/lockrun-verdicts-demo4 --ops` on an empty account: nyc2, `s-1vcpu-2gb-amd` for every droplet,
+Ubuntu 24.04. 69 steps, the last two the cutoffs (`require-signatures`,
+`require-researcher-signatures`); the data host requires a signed request from provisioning. Then
+the checks below. 1 h 57 min to the cutoffs, with two fixes and 1245 s waiting for the operator's
+token on the ops droplet.
+
+- **Six bugs, each a regression test and a commit; for the two found live the run resumed at the
+  step that failed:**
+  1. Before the run, a test that failed 2 of about 12 parallel runs: the data host refuses an
+     oversized install on the request line alone and closes its side; when the laptop wrote the
+     ciphertext only after that, it reported "dropped the session" instead of the refusal. The
+     caller now reads the answer after a closed pipe (`8e46557`).
+  2. Before the run, `reset-local` left the researchers' certified keys and the demo researcher's
+     private key in `out/`, which the next demo would have reused (`c2fc89f`).
+  3. Before the run, `reset-local` kept `out/holdouts/`, so `holdout-init demo-1` would have refused
+     the id, and the demo wrote the new plaintext over the kept one before that refusal. The holdouts
+     now move with the deployment (`06517c6`); the demo refuses before writing (`c3529b1`).
+  4. Step 39, `retag-locked lockrun-p3-verify-1`: right after the untag, DigitalOcean's tag count was
+     already 0 while the droplet list still showed the tag, and the guard refused. Each tag change now
+     waits, bounded, for the list (`c274b31`).
+  5. Step 51, `anchors-verify demo-1`: "no risk key to check a fresh verification's request with".
+     `anchor verify-repo` took no issuers, so every holdout with a fresh verification failed it. It
+     now takes risk's own public keys, which `do.sh` sends from the laptop (`fc8f78b`).
+  6. After the demo: every execution logged a false `ALERT runner_statements_recovered ... 0 signed
+     statement(s)`. The alert now fires only when something was recovered (`ff4eca4`).
+- **A replayed request, refused at every layer** (`redteam/replay_p3.py`, `c7f2a72`), within the
+  request's 15 minutes, right after the execution it opened (run `dec568d35ea1`):
+  - root on the service sent it to the data host over the service's own session: refused, "this
+    request was used before: a request opens one execution", no opening;
+  - root on the data host, running the data host's code with its nonce check removed, sent it to
+    the runner: the agent refused, "this request was used before on this runner", nothing sent to
+    the service and no record;
+  - through the API, the service refuses it (403) before queueing (the suite; not repeated live).
+- **A request signed by another key:** `HTTP 403: the request is not signed by tester's current key`,
+  at the API, before anything was queued or recorded.
+- **The refusal-time bound:** a run sealed with an `as_of` inside the holdout (2024-05-21), refused
+  by the data host 1.9 s after its seal (`execution_refused`, `leaked_as_of`), was shown done to the
+  researcher 310 s after the execution started (`refused_done_s`, against the 270 s bound
+  `MIN_REFUSED_DONE_S`); the client saw it done after 311.0 s, as "execution failed".
+- **Executions and verdicts:** tester's executions before and after the cutoffs returned clean
+  (Sharpe 0.441 each), each opening carrying its signed request; both fresh verifications ran on
+  K_risk-signed requests and matched (verify-1, verify-2). demo-1 #11 (run `a4a4c4a382c4`, N 2) and #26
+  (`dec568d35ea1`, N 4), both PASS, signed by `sign-verdicts` after the full replay; `verify-verdict`
+  checked each from fresh public clones; `anchors-verify` (with risk's key) passed.
+- **Every gate on every host:** `check-service` (four times), `check-data` on data-1, data-2 and
+  data-3, `check-runner` on tester, verify-1, tester2, verify-2, tester3 and verify-3 (R1, K1, K2, F5
+  and H1 included), `check-firewalls`. No failure.
+- **Recycles:** two `recycle-all` from the ops droplet, 1320 s (tester → tester2 629 s, verify-1 →
+  verify-2 666 s) and 1311 s (tester2 → tester3 640 s, verify-2 → verify-3 646 s); two `recycle-data`
+  from the laptop, data-1 → data-2 (497 s) and data-2 → data-3 (500 s). `verify @runners` afterwards:
+  14 records, every binding rule, counters complete for 6 runner keys and 3 data host keys, every
+  request nonce used once. The risk report: N 4, both verdicts signed, anchors verify OK.
+- **Execution time on the service's clock** (opening record to outcome record): 10.7 s before the
+  cutoffs and 7.5 s after (10.9 s from the seal); 3.5 s and 3.6 s per fresh verification.
+- **Timings:** `build-image` 66 s, `provision-service` 389 s, `check-service` 28–34 s,
+  `provision-data` 284–314 s, `check-data` 10–21 s, `provision-runner` 298–356 s, `check-runner`
+  171–176 s, `holdout-init` (the demo's holdout step) 11 s, `demo-execute` 16–19 s, `verify-fresh`
+  19–20 s, `sign-verdicts` 10–13 s, `verify-verdict` under 1 s.
 
 **The data host, from zero (26 October 2026, 12:35–16:20 UTC).** `demo-from-zero --researcher tester
 --holdout demo-1 --anchors-repo giusefrr/lockrun-anchors-demo3 --verdicts-repo giusefrr/lockrun-verdicts-demo3
@@ -313,7 +374,7 @@ The lists below are for the 14–16 October deployment unless they say otherwise
 
 ## 2. Verified by the test suite only
 
-1642 tests (`uv run pytest`, 25 October 2026). The stand-ins:
+1760 tests (`uv run pytest`, 27 October 2026). The stand-ins:
 
 - `tests/fake_podman.py`: Podman, `systemd-run` and `systemctl` on a runner. It models `run`,
   `--rm`, `rm --force`, `container inspect`, `ps`, the job's tmpfs and `podman unshare`, and reports
@@ -371,6 +432,16 @@ runners (the process backend):
   journal recovery, recomputed promotes and the K_risk-signed fetch for the replay
   (`test_data_signatures.py`); the handover at a rebuild (`test_data_handover.py`); the refusal-time
   bound (`test_refusal_time_bound.py`); do.sh's data role, firewalls and steps (`test_deploy_data.py`).
+
+Researcher-signed requests (plan item 1) are tested against an in-process service, data host and
+development runners, with the real signer and openssl: the ticket and the service's checks
+(`test_request_service.py`); the data host's and the agent's checks, nonces and their handover
+(`test_request_checks.py`); risk's verify of every opening's request (`test_request_verify.py`); risk's K_risk-signed fresh
+verification (`test_request_verify_fresh.py`);
+do.sh's researcher keys and anchors-verify (`test_request_deploy.py`); the replay tool
+(`test_redteam_replay.py`). All of it ran live on 27 October (section 1) except the
+`request_refusals` ALERT for more than 3 requests refused at the API in 24 hours
+(`test_request_refusals_alert.py`), which postdates that deployment.
 
 - **The signer:** it refuses on a changed ledger, a recomputation off by 1e-9, or a missing deposit
   (the verdict waits). It signs a verdict with its alert, and signs everything again after a key

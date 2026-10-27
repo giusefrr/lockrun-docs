@@ -21,9 +21,14 @@ shows, and what we cannot verify.
 2. **N comes from the ledger, and every opening counts.** Each execution that opens the holdout is
    a trial, whatever its outcome, including one abandoned after a crash. A researcher's execution
    runs twice; any disagreement rejects it. A failure tells the researcher only "execution failed".
-   Researchers cause appends only, and send weights, never returns. An execution refused before
-   opening is no trial but is recorded and counts in the execution quota. Each researcher has at most
-   one execution in flight, and its slot frees only once the runner confirms the job stopped.
+   Researchers cause appends only, and send weights, never returns. An execution the service queued
+   and the data host (or the service's worker) refused before opening is no trial but is recorded
+   and counts in the execution quota. A request refused at the API (a wrong key, a replayed or
+   malformed request, none after the cutoff) opened and queued nothing: it is not recorded and does
+   not count; it goes to the rejection log with its reason, and more than 3 for one researcher in
+   24 hours (counted since the service started) raise an ALERT, a leaked token or a broken client.
+   Each researcher has at most one execution in flight, and its slot frees only once the runner
+   confirms the job stopped.
 3. **The sealed code is the code that runs, in a launch the agent verifies.** The service stores a
    `git archive` of the sealed commit and runs only that snapshot. The runner agent starts it under
    gVisor with the launch profile in §4 and, before the first message that loads strategy code,
@@ -100,8 +105,22 @@ one request per session (hello, run, stats, journal, retire; install and fetch n
 signature; handover and receive need certified keys). *Data host → runner:* SSH with a pinned host
 key, the data host's key, the only one the agent lets start a job. *Service → runner:* SSH, forced,
 limited to identify, journal and retire. The runner holds no credential to either. Before anything
-is decrypted the runner's build_id and image ID are checked by the service and its certified key by
-the data host, and its build_id must be the one bound to the researcher.
+is decrypted the data host checks the execution's signed request (below) and the runner's certified
+key; before anything is sent to the runner it checks the runner's hello (build_id, the one bound to
+the researcher; the pinned image; backend; CPU flags).
+
+**Signed requests (plan item 1).** Each researcher has an Ed25519 key of their own (`lockrun remote
+key init`), certified by K_risk and recorded in the bindings log; a later key or a revocation kills
+the previous one from that record on. Every execute carries a request the researcher's key signed:
+the holdout, run, the seal record's full hash, the researcher, the bindings head, a 128-bit nonce and
+a time at most 15 minutes ahead. A fresh verification's request is risk's, signed with K_risk on the
+laptop. The data host checks it before decrypting (and keeps each nonce until it expires, handed over
+at a rebuild), the runner's agent before launching (risk's key in its `agent.json`; a request its
+signer already opened a job on is refused), and the opening record carries it. **Verified live, 27
+October 2026** (`docs/WHAT_IS_VERIFIED.md`): on a deployment built from zero, a replayed request
+was refused by the data host (sent by root on the service) and by the agent (sent by root on the
+data host with its nonce check removed, `redteam/replay_p3.py`), a request signed by another key by
+the API, and both fresh verifications ran on K_risk-signed requests.
 
 ## 3. Root on the service host
 
@@ -118,10 +137,20 @@ host did not sign, after the data cutoff (claim 10).
 opening or outcome, or one whose signature is forged, is a chain error before the next deposit and
 after it, though root's own deposit anchors it. A signed record removed leaves a gap in its runner
 key's counters, seen at the runner's next signed statement and at the latest at its final statement
-when the nightly recycle retires it. **Can still:** start genuine executions on a researcher's runner
-(it holds the service's SSH key; researcher-signed execute requests are the next item), and stop
-them, which the runner signs as what they were; stream altered rows, which the runner signs as
-received and risk's replay with the plaintext refuses.
+when the nightly recycle retires it. **Can still:** stop executions, which the runner signs as what
+they were; stream altered rows, which the runner signs as received and risk's replay with the
+plaintext refuses.
+
+**Cannot, from the researchers' cutoff on (`require_researcher_signatures`, marked in each ledger;
+the data host requires it from provisioning):** start an execution in a researcher's name, or a
+fresh verification. Without a request the researcher's current key signed (or K_risk, for a
+verification), the data host decrypts nothing and the runner starts nothing; an opening record
+without it, or with one that does not check out, is refused at write and a chain error in risk's
+`verify` and `sign-verdicts`. Root cannot add a key of its own (only K_risk certifies one, checked
+by the data host, the runner and risk's verify) nor revive a replaced one. A request opens one
+execution: the data host, the runner's journal and the ledger each refuse its nonce a second time.
+**Can still:** hold a request the researcher sent and use it within its 15 minutes, for the one
+execution the researcher asked for, or not run it at all.
 
 **Cannot:** change what was deposited off-host. Anchors (count, head, time, chained) are pushed to a
 git repository whose `main` the git host protects; `anchor verify-repo` flags any commit that does
@@ -146,6 +175,7 @@ service host's own.
 | A signed execution record removed, chain and witness rewritten | | `verify @runners` fails: a gap in the runner key's counters (the tail: at its next statement or its final) | detected |
 | A summary, an outcome or a promote's detector flags rewritten (after the data cutoff) | | `verify` fails: the data host's statement is not the record's, or the outcome is not the one its signed runs give | (anchors it: still fails) |
 | Bindings record appended that breaks a binding rule (a runner moved, a second runner for a researcher) | refused on the next read | detected: `verify @runners` names the record and the rule | |
+| An opening without its signed request, or with one forged, for another execution, or used before (after the researchers' cutoff) | refused at write | `verify` fails: the request is missing or does not check out; `verify @runners`: a nonce used twice | (anchors it: still fails) |
 | Verdict computed on a ledger later cut and re-anchored | | | `verify --verdict` fails |
 
 ## 3a. Signed verdicts
@@ -434,12 +464,10 @@ The agent's launch check read this as the profile it asked for (every field matc
   time; per promote, statistics over all trials at 3 significant digits. Ceiling about 45–50 bits
   per execution, by counting values.
 - **Full disk** halts the service or leaves an unwitnessed line (a false tamper alarm).
-- **Executions the researcher did not request.** Root on the service host can start real executions
-  on a researcher's runner, through the data host (claims 9 and 10 do not cover intent).
-  Researcher-signed execute requests, checked by the data host, are the next item; not built.
-- **Refused executions are shown done 360 s after their start** (`MIN_REFUSED_DONE_S`: the service's
-  identify, the data host's deadline for its opening and the closes). A runner journal recovery after
-  a crash (an extra identify-length session) is not inside that bound.
+- **A researcher's key on their own machine.** Whoever holds it (and the token) executes as that
+  researcher; risk revokes it (`lockrun-risk researcher key revoke`) and records a new one. The key is
+  a PEM file for now; an ssh-agent or a hardware key can replace it without changing the request
+  (plan items 6 and 15).
 
 ## 6. Where an external reviewer should look first
 
@@ -480,3 +508,8 @@ The agent's launch check read this as the profile it asked for (every field matc
     the K_risk-signed install and fetch, and their one-hour not_after window; the handover's
     encryption (X25519, HKDF-SHA256, AES-256-GCM) and that only K_risk certifies its key; that the data host's
     SSH key to runners survives rebuilds (handed over) while its signing key does not.
+12. **Signed requests (§2, §3):** the 15-minute window in which root on the service can use a request
+    the researcher sent, for that one execution; the nonce stores (the data host's, handed over at
+    each rebuild; the agent's, its signer's journal); that requests refused at the API are counted in
+    memory only, so a restart resets the `request_refusals` alert's 24-hour count; and the
+    researcher's key as a PEM file on their own machine (§5).
