@@ -5,8 +5,9 @@ test suite shows, and what we cannot verify. Status as of 27 October 2026: resea
 requests (plan item 1, THREAT_MODEL.md §2 and §3) ran live on a deployment built from zero that
 night; the data host (claim 10: the service never holds the holdout) the day before, and runner
 signatures (claim 9) the night before that (all below); the rest is as of 18 October. The
-adversarial tests of plan item 2 and their four fixes (section 2, 27 October) have run only in the
-suite: the live deployment runs code from before them.
+adversarial tests of plan items 2 and 3, their fixes, and the statistical rule that plan item 3 led
+to, the joint bar (section 2 and THREAT_MODEL.md §5a, 27 October), have run only in the suite: the
+live deployment runs code from before them.
 
 ## 1. Verified on a live deployment
 
@@ -376,7 +377,7 @@ The lists below are for the 14–16 October deployment unless they say otherwise
 
 ## 2. Verified by the test suite only
 
-1915 tests (`uv run pytest`, 27 October 2026). The stand-ins:
+2143 tests (`uv run pytest`, 27 October 2026, with `LOCKRUN_REQUIRE_OPENSSL=1`). The stand-ins:
 
 - `tests/fake_podman.py`: Podman, `systemd-run` and `systemctl` on a runner. It models `run`,
   `--rm`, `rm --force`, `container inspect`, `ps`, the job's tmpfs and `podman unshare`, and reports
@@ -442,6 +443,51 @@ check to refuse it: `lockrun-risk verify`, `anchor verify-repo`, `sign-verdicts`
    marker (any of the four, canonical values included) does not come before it in its ledger refuses
    the whole ledger ("the ledger's marker is missing"). This also catches a record placed between
    the removed marker and the first record that names a head, such as an NFD seal.
+
+**Adversarial researchers against the statistics (plan item 3, 27 October 2026).** Eight researcher
+strategies, each trying for a PASS it does not deserve, with the null hypothesis true (every asset's
+returns iid with zero mean), through the real promote path: `evaluate_promotion`, the dummy detector,
+the five families. The PASS rate over many seeds must stay at or below the nominal false-positive
+rate of the threshold, 0.05: the tests require the 99.9% upper bound of the measured rate to be at or
+below it. Cases 1 to 3 and 5 to 8 feed returns directly (`tests/adversary_world.py`), case 4 and its
+adaptations weights through the data host's summaries (`tests/risk_world.py`). The rates below are
+under the rule in force since that day (the joint bar); for case 4, before it too.
+
+| Case | Strategy | PASS rate (nominal 0.05) | Tests |
+|--|--|--|--|
+| 1 | Pure luck: N null strategies, the best promoted | N = 1: 0.0077; 2: 0.0045; 10: 0.0010; 100: 0.0025; 1000: 0 | `test_adversary_luck.py` |
+| 2 | Seed mining: one strategy sealed with 100 and 2000 seeds | 0 and 0 | `test_adversary_seed_mining.py` |
+| 3 | Crashing on purpose when the partial Sharpe looks bad (k < T/2 and k ≥ T/2, with and without partial returns) | 3 in 7400 over every variant; worst 0.004 | `test_adversary_early_failures.py` |
+| 4 | Going flat, or cutting risk, once ahead (and its adaptations) | before the rule: up to 0.27 (n = 1); now at most 0.021 | `test_adversary_zero_tail.py`, `test_adversary_risk_cuts.py`, `test_adversary_risk_estimate.py` |
+| 5 | Duplicate laundering: scaled and one-period-flipped copies | 0 in 5200 | `test_adversary_duplicates.py` |
+| 6 | Alternating early and late failures between the families | 4 in 7250; worst 0.0017 | `test_adversary_families.py` |
+| 7 | Wide junk to inflate V, tight junk to shrink it | 0 in 2600 | `test_adversary_variance.py` |
+| 8 | Nondeterminism: runs A and B differ, or the fresh run does | never promotable; junk around candidates 0 in 1300 | `test_adversary_nondeterminism.py` |
+
+Case 4 is the one that did not hold: a strategy that goes flat once its running t-statistic is high
+keeps that statistic while the PSR counts every period. Rules that looked at zeros (a terminal run of
+zero weights) or normalized by gross exposure were each simulated and evaded (trading again at the
+end, tiny weights, a hedge, diversifying); the rule adopted grades returns over their ex-ante risk on
+their active periods against a bar calibrated for a researcher free to stop (THREAT_MODEL.md §5a, with
+every cell, its power cost and what it does not measure; the simulations in `tools/joint_bar/`). Case
+8's rule was kept and is asserted: both series of a disagreeing opening enter every V, and the opening
+counts twice in N.
+
+*Found and fixed on the way, each a test and a commit:*
+1. Risk's replay recomputed the data host's series hashes and detector flags but not its signed
+   summaries (T, moments, k, the zero-padded Sharpe), which the verdict is computed from: a
+   compromised data host could sign a Sharpe its series does not give, and `verify --holdout-file`
+   and sign-verdicts passed it (`6efebe0`). Section 3 claimed this check already.
+2. The replay raised `TypeError` on a nondeterministic outcome whose failed run had no partial
+   returns (`dc1a860`).
+3. sign-verdicts recomputed each verdict from the init's joint bar without checking it: a table
+   rewritten consistently recomputed to the same verdict. It now checks risk's signature and runs the
+   calibration again from the plaintext (`419e62a`).
+4. The df fit of the joint bar ran on an empty array for a holdout with too few residuals; below 30
+   it takes the floor, recorded as not fitted (`1d96a07`).
+5. The scale of each family first included the candidate's own t-statistic, so a strong candidate
+   inflated its own bar and among widely dispersed trials none could pass; it leaves the candidate
+   out (`e3f7706`, a decision on the rule: THREAT_MODEL.md §5a).
 
 Runner signatures (claim 9) are tested with the real signer (`lockrun/runner/signer.py`) and the
 real openssl command, against development runners (the process backend):
@@ -515,7 +561,8 @@ and launch check; every `do.sh` guard and step; the soak and anchor scripts.
   the operator droplet.
 - What a compromised data host signs before risk next replays: its summaries and detector flags
   are checked only at sign-verdicts and `verify --holdout-file`, which recompute both from the
-  plaintext and the runner-signed weights.
+  plaintext and the runner-signed weights (the summaries since 27 October 2026; before, only the
+  hashes and flags).
 - That the plaintext never left the data host while it was compromised.
 - That risk's signing key stayed on risk's laptop, and when a verdict was signed: `signed_at` and
   the commit dates are the signer's own. Records appended after a compromise of the service host

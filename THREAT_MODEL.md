@@ -39,9 +39,11 @@ shows, and what we cannot verify.
    (count, head) to a witness log. The running service refuses a holdout whose ledger no longer
    chains, no longer matches its witness, or no longer extends the head it last verified (§3).
    `lockrun-risk verify` checks the same from disk, plus anchors exported off-host.
-5. **No PASS without reproduction.** Risk sets the threshold and min_t per holdout. A passing
-   promotion stays `pending_verification` until risk re-runs it on a fresh verify runner and gets a
-   bit-identical returns hash. Fresh means: a build_id seen in no holdout's ledger nor the bindings
+5. **No PASS without reproduction, and no PASS for stopping early.** Risk sets the threshold and
+   min_t per holdout, and on the laptop calibrates the holdout's joint bar, signed with K_risk in its
+   init record (§5a). A promote grades the candidate's returns over their ex-ante risk against that
+   bar. A passing promotion stays `pending_verification` until risk re-runs it on a fresh verify
+   runner and gets a bit-identical returns hash. Fresh means: a build_id seen in no holdout's ledger nor the bindings
    log, and a name never bound and never used for a researcher's execution.
 6. **One runner per researcher.** A researcher's executions run only on the primary runner bound to
    them in the bindings log; a researcher with none is refused (§4).
@@ -68,7 +70,7 @@ shows, and what we cannot verify.
     a K_risk signature (`do.sh holdout-init`). For each run the data host signs its opening (the
     plaintext's hash, the plan's steps, the run's status and row counts) and, per execution, the
     outcome's summaries (T, moments and returns hash; for a failed run its length k and zero-padded
-    Sharpe); for each promote it runs the dummy detector on the series the trial structure names and
+    Sharpe; for either, T_eff and the moments of the returns over their ex-ante risk, §5a); for each promote it runs the dummy detector on the series the trial structure names and
     signs its flags. Only K_risk certifies its keys, from the laptop (the `data_host` bindings record,
     the data cutoff, marked in every holdout's ledger; K_ops certifies runners only). From the cutoff
     a record without the data host's valid statement, a statement that is not its record's, an
@@ -217,9 +219,12 @@ verdict's anchor line names exactly its record hash.
   fetched from the data host under a K_risk-signed request, through the service as a jump host;
 - checks the data host's statements (claim 10) the same way: every opening, outcome and promote,
   its counters, and each promote's detector answer against the trial structure it recomputes; then
-  recomputes the detector's flags from the series its own replay gives (plaintext and runner-signed
-  weights, each matching the hash the record names): flags other than the data host signed are a
-  chain error, and nothing is signed.
+  recomputes each run's summary (T, moments, k, the zero-padded Sharpe, T_eff and the moments over
+  ex-ante risk) and the detector's flags from the series its own replay gives (plaintext and
+  runner-signed weights, each matching the hash the record names): a summary or flags other than the
+  data host signed are a chain error, and nothing is signed;
+- checks each holdout's joint bar (§5a): risk's signature over it, and, with the plaintext, the df
+  fitted and the table simulated again from its seed.
 
 The verdict, N and threshold must be identical, the other fields too, and numbers must agree
 within 1e-12. It stops, signing nothing, on anything else. The signature covers the promote record
@@ -278,8 +283,8 @@ its answers to the service and its sessions to runners (cloud firewall and host 
 the service only, out to the runners only), so a compromised data host can leak the plaintext to a
 compromised service through its answers. **Cannot:** forge a runner's statements, so risk's replay
 (with the plaintext and the runner-signed weights) refuses altered rows and returns it signed, and
-detector flags other than the replayed series give (sign-verdicts and `verify --holdout-file`
-recompute them); make
+summaries or detector flags other than the replayed series give (sign-verdicts and `verify
+--holdout-file` recompute them, the summaries since 27 October 2026); make
 risk's laptop install or fetch anything (both need K_risk); hand the holdouts to a key risk did not
 certify. Root on the operator droplet cannot either: K_ops certifies runners, never a data host or
 its handover key, and `verify @runners` refuses a data_host record certified otherwise. **Weekly
@@ -470,7 +475,10 @@ The agent's launch check read this as the profile it asked for (every field matc
     differently. `sign-verdicts` refuses them until a promote under the new rule supersedes them.
   - **Open for review:** whether zero-padding an early failure's partial returns is the right
     treatment for a strategy that stopped early, and how the padded series interact with the dummy
-    detector.
+    detector. Since 27 October 2026 the verdict grades every trial, failed ones included, on its
+    active periods over ex-ante risk (§5a): the padded series still feed V (recorded, for comparison)
+    and the detector, not the verdict's statistic.
+- **Optional stopping** is the statistical rule of §5a: the gaps it leaves are listed there.
 - **Output channel.** Per execution: success or failure, Sharpe/skew/kurtosis rounded, completion
   time; per promote, statistics over all trials at 3 significant digits. Ceiling about 45–50 bits
   per execution, by counting values.
@@ -479,6 +487,104 @@ The agent's launch check read this as the profile it asked for (every field matc
   researcher; risk revokes it (`lockrun-risk researcher key revoke`) and records a new one. The key is
   a PEM file for now; an ssh-agent or a hardware key can replace it without changing the request
   (plan items 6 and 15).
+
+## 5a. Statistical rule: the joint bar (27 October 2026)
+
+A rule change, for external review (the DSR's authors among the reviewers). The simulations behind
+every number here are in `tools/joint_bar/` (README there), the rule in `lockrun/exposure.py`,
+`lockrun/calibration.py` and `lockrun/trials.py` (`evaluate_promotion`).
+
+**The problem: optional stopping.** A strategy that watches its own running t-statistic and goes
+flat once it is ahead keeps the t-statistic of its first k periods, while the PSR counts all T: the
+zeros dilute nothing. Under the DSR (with the fresh verification reserved in N), the best such rule
+passed at 0.27 with one trial and 0.08 with two, against a nominal 0.05; the same strategy played
+honestly passed at 0.015 (plan item 3, case 4). A rule on a terminal run of zero weights did not hold:
+trading again for the last period (0.17) or weights times 1e-6 instead of zero (0.27) kept the excess.
+
+**The rule.**
+
+1. **Returns over ex-ante risk.** Each step's return is divided by the ex-ante risk of its weights,
+   sqrt(w' S w), S the sample covariance of the held assets' returns over the 60 rows strictly before
+   the step (rows where every held asset has a return; at least 20, else no estimate). No shrinkage:
+   shrinking S toward its diagonal overstates a hedge's risk, and a hedge of two twin assets then
+   passed at 0.06 to 0.14. A step is **inactive**, missing data, with no weights, no estimate, zero
+   risk (weights in S's null space) or risk under 10% of the strategy's median active risk. Normalizing
+   by gross exposure instead missed a hedge (0.09) and spreading over 100 assets (0.088).
+2. **T_eff.** The statistic is the PSR statistic against 0, z = sr sqrt(T_eff - 1) / sqrt(1 - skew sr
+   + (kurt - 1)/4 sr^2), on the active steps' normalized returns; T_eff, their number, is what min_t
+   applies to.
+3. **The joint bar.** F is the null CDF of sup over k in [min_t, T] of z_k for one trial with iid
+   Student-t returns (the researcher may stop at any k), simulated at holdout-init on risk's laptop:
+   the df fitted on the holdout's residuals by profile likelihood, floor 4 (fewer than 30 residuals:
+   the floor, recorded as not fitted), 2M paths, a recorded seed. For n trials each free to stop,
+   c(n) = F^-1(threshold^(1/n)); a candidate's value is F(z)^n, so value >= threshold is z >= c(n).
+   n is every opening counted in N except fresh verifications: a verification reproduces the
+   candidate, it is no other draw, and nothing is reserved for it (c(n), not c(n + 1), decided on
+   the condition below). Beyond n = 1000 the bar is extrapolated linearly in log n, which errs high.
+4. **The families stay.** Each of the five families (with and without the zero-tail series, with and
+   without the detector's flags) keeps its trials and flags. Its value is F(z / s)^n, s = max(1, the
+   sample sd of its other trials' t-statistics sr sqrt(T_eff)). The candidate is left out of s: with
+   it in, a strong candidate inflated its own bar (s grows as t / sqrt(n), z more slowly than t), and
+   among 20 widely dispersed trials no candidate could pass at all. PASS iff the lowest of the five
+   values is at least the threshold. The DSR's N, V and sr0 are still computed and recorded, for
+   comparison; the researcher sees the same fields as before, `value` now the joint bar's and
+   `label` "joint bar".
+
+**Who computes what.** The data host signs each run's T_eff and normalized moments in its
+data_outcome, for a whole series and for a failed run's partial returns; risk's replay recomputes them
+from the plaintext and the runner-signed weights (and, since the same day, the T, moments, k and
+zero-padded Sharpe it already signed: before, only hashes and detector flags were recomputed). The
+calibration is in the init record with the exposure parameters, under risk's signature
+(`calibration_sig`); the exposure parameters are also in the data host's signed install fields.
+`lockrun-risk init-record` refuses a record without the signed calibration; the service computes the
+verdict from the init's table and refuses a holdout without one; `verify` checks the signature and,
+with the plaintext, fits and simulates again: the table must reproduce exactly.
+
+**What was measured (PASS rate under the null, 2000 seeds per cell, nominal 0.05).** Through the
+implemented code (`tests/risk_world.py`; the suite pins the same cells with fewer seeds):
+
+| Researcher strategy | Before the rule (n = 1 / 2) | Joint bar, c(n) (n = 1 / 2) |
+|--|--|--|
+| Honest, constant exposure | 0.0115 / 0.0020 | 0.0135 / 0.0105 |
+| Honest, 10% random flat days | 0.0140 / 0.0020 | 0.0140 / 0.0100 |
+| Flat once ahead | 0.257 / 0.071 | 0.0205 / 0.0160 |
+| Flat, then trading again for the last 1 / 2 / 5 periods | 0.164 / 0.120 / 0.083 (n = 1) | 0.0205 / 0.0200 / 0.0175 (n = 1) |
+| Weights times 1e-6 / 0.01 / 0.05 once ahead | 0.257 / 0.200 / 0.112 (n = 1) | 0.0210 / 0.0210 / 0.0175 (n = 1) |
+| Same gross over every asset (8 / 100 assets) | 0.014 / 0.0165 (n = 1) | 0.0130 / 0.0130 (n = 1) |
+| Hedge of two twins / with a drifting ratio | 0.129 / 0.0835 (n = 1) | 0.0205 / 0.0165 (n = 1) |
+| Only the lowest-variance asset | 0.035 (n = 1) | 0.0150 (n = 1) |
+| Pausing in the window covariance's null space (100 assets) | not run | 0.0125 / 0.0075 |
+| An asset whose volatility the window lags (falls tenfold) | not run | 0.0200 / 0.0175 |
+| Every trial stopping at c(n), n = 1 to 50, normal / Student-t(4) | not run | at most 0.0200 / 0.0280 |
+
+Each adversary cell is the worst over its stopping rule (c from 1.5 to 3.5, first stop from period 2,
+3, 20 or 100). The calibration takes 19 to 23 s for T = 250 and 200 to 240 s for T = 2500 on one core
+of a laptop (2M paths, 392 MiB at most); on the data host's droplet size it was not run.
+
+**What is lost.**
+- **Power.** One honest trial holding one asset, daily periods, T = 250, true annualized Sharpe 1, 2,
+  3, 4: PASS 0.119, 0.413, 0.775, 0.962 before; 0.099, 0.337, 0.690, 0.931 now (pinned in
+  `tests/test_joint_bar_controls.py`). The 20-row warm-up leaves T_eff at most T - 20.
+- **An edge in sizing is not measured.** Returns over their ex-ante risk weigh every active step
+  alike: a strategy that takes a larger position when its per-period Sharpe is known to be higher
+  loses that information (about a fifth of its t-statistic in the documented case). A strategy whose
+  edge lies only in timing its exposure is graded on its direction.
+- **Local mode** has no weights: every step of submitted returns is active, and the bar is calibrated
+  at promote, at the df floor (no return column to fit).
+- **Holdouts initialised before the rule** have no joint bar: their promotes are refused until the
+  holdout is initialised again.
+
+**Open for review.**
+- The independence assumption: c(n) is the quantile of the maximum of n independent trials. Trials on
+  one holdout are correlated, which lowers the true quantile: conservative, not exact.
+- The tail: iid Student-t at the holdout's pooled residuals, floor 4. Volatility clustering is not
+  in the calibration; one regime shift the window lags was simulated (above), not a clustered market.
+- The window (60 rows, 20 to start), the inactivity floor (10%) and the null-space threshold (a
+  variance at most 1e-10 of the weights' uncorrelated variance), and that no shrinkage is applied.
+- The scale's leave-one-out form, and that it uses t-statistics rather than Sharpes (T_eff differs
+  across trials).
+- The value is F(z / s)^n with F interpolated between stored quantiles: it moves slightly with the
+  stored levels, the threshold's among them; the verdict is exactly z / s >= c(n) on that F.
 
 ## 6. Where an external reviewer should look first
 
@@ -534,3 +640,14 @@ The agent's launch check read this as the profile it asked for (every field matc
     look: `lockrun/service/cutoffs.py`, where a requirement starts and that it never stops. The
     store checks only that signatures are present on read; their verification runs at append and in
     risk's `verify`.
+14. **Adversarial researchers against the statistics (plan item 3, docs/WHAT_IS_VERIFIED.md §2):**
+    eight researcher strategies under the null, each through the real promote path. Seven held; one,
+    stopping once ahead, passed at up to 0.27 and led to the joint bar.
+15. **The joint bar (§5a):** the rule itself, for the DSR's authors as much as for us:
+    - the ex-ante risk estimate (`lockrun/exposure.py`): the window, no shrinkage, the null-space
+      threshold, and what an adversary could do with an estimate it knows to be wrong;
+    - the calibration (`lockrun/calibration.py`): the statistic, the Student-t tail at the floor of
+      4, independence across trials, the extrapolation beyond n = 1000, that it reproduces from its
+      seed on another machine;
+    - the scale (`lockrun/trials.py`, `scale`): leave-one-out, on t-statistics;
+    - what is lost: power, and an edge in sizing.
