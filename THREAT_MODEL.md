@@ -446,6 +446,23 @@ The agent's launch check read this as the profile it asked for (every field matc
 
 ## 5. Known gaps
 
+- **Anchor cadence through an outage (risk's decision of 29 October 2026: no gap is ever accepted).**
+  The anchors repository never goes an hour without a line, whichever hosts are lost.
+  - The service down, the operator droplet up: ops' hourly deposit re-deposits each log's head from
+    the newest backup or increment, as anchors marked "unreachable since <time>, heads from <manifest
+    hash>". They are anchors of each log's chain, checked against its records.
+  - Both lost: the anchors repository's own scheduled job (GitHub Actions, hourly) appends a heartbeat
+    naming each log's last heads whenever no deposit landed in the last hour. A heartbeat is a cadence
+    point with no new record; one naming other heads than the line before it is a tamper.
+  - A restore accepts a record beyond a log's last anchor only if the backup or increment holding it
+    was uploaded to the write-once store (its versions listing, retention-locked) before the first
+    heartbeat of the outage; anything else is refused. restore-open deposits one K_risk-signed restore
+    line naming the attestation and the stretch, so the history says why the heads did not move. It
+    exempts no gap.
+  - **The one remaining assumption:** GitHub's scheduler and the store's clock (B2) are independent of
+    our hosts. Root on our hosts can neither run the heartbeat job nor date an upload; whoever controls
+    the GitHub account or the store's clock could.
+
 - **Same data elsewhere.** Trials run outside lockrun on public copies of the data are invisible.
 - **Rule-aware dummy trials** can lower trial-Sharpe variance to its floor and raise the DSR
   undetected (internal red team). Effective-N is out of scope.
@@ -597,7 +614,8 @@ of a laptop (2M paths, 392 MiB at most); on the data host's droplet size it was 
    restart; only off-host anchors catch it. Should startup require a fresh anchor match?
 4. **Mid-ledger edits under a running service.** Only new lines are verified between restarts.
 5. **Anchors:** who owns the repository, the cadence window, self-reported times, and that `verify`
-   runs with the service host's own code and files. Since 16 October 2026 an anchor's count may go
+   runs with the service host's own code and files. The outage rule (§5): ops' "unreachable" anchors,
+   the repository's heartbeat, and the B2-dated rule at restore. Since 16 October 2026 an anchor's count may go
    back, to a verdict or bindings record anchored late; the record it names is checked like any other.
 6. **Signed verdicts (§3a):** what sign-verdicts recomputes and what it only compares
    (`lockrun/service/sign.py`), the 1e-12 tolerance, that the verifier trusts the statement's anchor
