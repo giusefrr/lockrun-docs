@@ -105,7 +105,8 @@ state that survives a job is listed in `RUNNER_PERSISTENCE.md`.
 JSON endpoints, 64 KiB bodies, daily per-researcher quotas, an allowlist of repository URLs per
 researcher. *Service → data host:* SSH from the service's VPC address only, forced to `lockrun-data`,
 one request per session (hello, run, stats, journal, retire; install and fetch need K_risk's
-signature; handover and receive need certified keys). *Data host → runner:* SSH with a pinned host
+signature; handover and receive need certified keys; backup encrypts only to the backup key K_risk
+certified, deploy/DISASTER_RECOVERY.md). *Data host → runner:* SSH with a pinned host
 key, the data host's key, the only one the agent lets start a job. *Service → runner:* SSH, forced,
 limited to identify, journal and retire. The runner holds no credential to either. Before anything
 is decrypted the data host checks the execution's signed request (below) and the runner's certified
