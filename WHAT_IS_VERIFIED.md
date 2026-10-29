@@ -1,7 +1,9 @@
 # What is verified
 
 For a risk team or an external reviewer. Three lists: what ran on a live deployment, what only the
-test suite shows, and what we cannot verify. Status as of 27 October 2026: researcher-signed
+test suite shows, and what we cannot verify. Status as of 29 October 2026: the backups and a full
+restore (plan item 4, deploy/DISASTER_RECOVERY.md) ran live as a drill on the nyc2 deployment that day
+(below); the outage rule decided during it (THREAT_MODEL.md §5) ran live in part. As of 27 October 2026: researcher-signed
 requests (plan item 1, THREAT_MODEL.md §2 and §3) ran live on a deployment built from zero that
 night; the data host (claim 10: the service never holds the holdout) the day before, and runner
 signatures (claim 9) the night before that (all below); the rest is as of 18 October. The
@@ -10,6 +12,79 @@ to, the joint bar (section 2 and THREAT_MODEL.md §5a, 27 October), have run onl
 live deployment runs code from before them.
 
 ## 1. Verified on a live deployment
+
+**The disaster-recovery drill (29 October 2026, 13:20–23:05 UTC).** On the nyc2 deployment
+(`s-1vcpu-2gb-amd`, Ubuntu 24.04). Storage: Backblaze B2, bucket `lockrun-p3-backups`, us-east-005,
+Object Lock in COMPLIANCE mode with a 30-day default retention. The service and the data host were
+destroyed and rebuilt from the backups; a run with a pending verification was carried across the
+restore and verified and promoted afterwards.
+
+- **The steps, in order:**
+  1. Item 4's code onto the deployment (ops-pull, ops-sync, provision-ops, prepare-service,
+     update-service), and recycle-data from data-3 to data-4 (13:22–13:32Z). The storage check then
+     passed once the bucket had a default retention.
+  2. The backup key made in the escrow (risk's key directory stood in for it), backup-certs,
+     ops-sync, then backup-timers: full backups 1419Z and 1443Z, uploaded write-once and recorded in
+     the bindings log.
+  3. Increment 1 (anchors commit `80bd867`), one execution and one promote on demo-3 (run
+     `6694c40c6039`, verification pending), increment 2 (`8bccf81`, demo-3 from 21 to 25 records).
+     Each increment's manifest names the previous manifest and the anchors commit it preceded.
+  4. Ops' increment timer stopped at 14:47Z; the service and data-4 destroyed. The last anchor was
+     14:45:39Z.
+  5. On the laptop: the chain fetched from B2 with risk's read-only key, byte-identical to the copy
+     on ops; opened in the escrow; backup-verify and restore-attest: deployment "resume", cause
+     not-compromise, every log resuming at its anchor (@runners 25, demo-1 14, demo-2 26, demo-3 25).
+  6. restore-service (a virgin host, closed, answering 503), restore-retire (tester3 at counter 4,
+     verify-5/6/7 at 0, data-4's final at 4), the deploy keys rotated; the second attempt from
+     16:16Z, 6 min 38 s to provision the host. restore-data onto data-5 (16:30–16:37Z, every holdout
+     and stream installed, bound with data-4's final). Two new runners, tester4 (primary, bound to
+     tester) and verify-8 (16:39–16:58Z).
+  7. restore-open (21:12Z): every log opened, TLS rotated, the one token reissued, the K_risk-signed
+     pin notice (re-signed at 21:40Z, below).
+  8. Every gate: check-service, check-data, check-runner on both runners, check-firewalls, and
+     `verify` on @runners (32 records) and each holdout. Ops authorised on the new service, a full
+     backup (2202Z), the anchors installed on the new host and a first deposit (22:03:26Z).
+  9. The outage rule's pieces: the signed restore line deposited; backup-timers (ops' own anchors
+     key added, full backup 2257Z, the service's timer off, ops' increment on); increments 1–3 of
+     2257Z, the third from the 23:00 timer; the heartbeat job installed in
+     `giusefrr/lockrun-anchors-demo5`, one manual run (nothing to append).
+  10. verify-fresh on `6694c40c6039` with verify-8: match. Promote: PASS (demo-3 record 30).
+      sign-verdicts, then verify-verdict from fresh clones: OK, the verdict anchored at `02f992b`,
+      the bindings head at `b7bdd11`. check-backups: ok.
+- **Fixes, each a regression test and a commit:**
+  1. SigV4 signed the query `%2F` as `%252F` (`fddce41`).
+  2. B2 answers 501 to `If-None-Match`: `conditional_put: false` checks the versions listing before
+     each put, and every read refuses a key with more than one version (`fe3f9a2`).
+  3. An old anchor-deposit.sh on the service ignored the commit and push modes and pushed before
+     any increment: backup-timers reinstalls it (`debf286`), and the increment refuses unless the
+     service's copy is ops' (`2d9b49d`).
+  4. No command fetched a backup from the store: `python -m lockrun.backup fetch` (`b6bfae0`).
+  5. restore-load failed on the append-only witness directory (a rename), and wrote the closed
+     marker last, leaving the service open with restored tokens for a moment: witness logs by
+     exclusive create (`656f397`), the closed marker first (`d3f2b47`).
+  6. restore-open refused the new runners bound before it, as the design says to do: `runner_bind`
+     and `verify_runner` may follow the attested head (`4feb752`).
+  7. The pin notice took the new host's pin as the previous one: the service prints the lost host's
+     (`335a63c`).
+  8. restore-service did not let ops' key into the new service, so ops' backup failed
+     (`37b2cd4`).
+  9. anchors-verify refused `@runners` (`5dd0939`).
+- **The outage rule (risk's decision of 29 October: no gap is ever accepted).** The drill left the
+  anchors silent from 14:45:39Z to 22:03:26Z, because the deposits were still on the service's own
+  timer. The rule closes that: ops deposits when the service is unreachable (`3b3f8fb`); the anchors
+  repository's heartbeat (`b757234`); the B2-dated rule at restore and the signed restore line
+  (`47e3c53`, `a4a3838`); a heartbeat never stalls a deposit (`3e6edc8`). backup-timers runs before
+  any holdout is initialised (`197456b`). Live: the restore line, ops' key and clone, and the
+  heartbeat job. Suite only: ops' deposit with the service down, a heartbeat appended by the job,
+  and a deposit re-applied over one.
+- **Not passed:** anchors-verify on every log fails, for good, on that 7 h 17 min gap. The rule
+  accepts no gap, and the repository's history keeps it. Risk's pin of the repository stays at the
+  last commit verified before it.
+- **Timings:** a service host from create to provisioned, 6 min 38 s; a data host to locked and
+  checked, 6 min 27 s; a runner to locked and checked, 8 min 50 s (tester4) and 8 min 34 s
+  (verify-8); restore-open, seconds; a full backup and its upload, about 5 s of CPU on ops; an
+  increment, about 5 s. The service was down from 14:47Z to the open at 21:12Z, almost all of it
+  spent finding and fixing the faults above.
 
 **Researcher-signed requests, from zero (26–27 October 2026, 23:22–02:13 UTC).** `demo-from-zero
 --researcher tester --holdout demo-1 --anchors-repo giusefrr/lockrun-anchors-demo4 --verdicts-repo

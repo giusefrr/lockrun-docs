@@ -455,8 +455,9 @@ The agent's launch check read this as the profile it asked for (every field matc
     naming each log's last heads whenever no deposit landed in the last hour. A heartbeat is a cadence
     point with no new record; one naming other heads than the line before it is a tamper.
   - A restore accepts a record beyond a log's last anchor only if the backup or increment holding it
-    was uploaded to the write-once store (its versions listing, retention-locked) before the first
-    heartbeat of the outage; anything else is refused. restore-open deposits one K_risk-signed restore
+    was uploaded to the write-once store (its versions listing, retention-locked) before the
+    attestation, and before the first heartbeat of the outage when there is one; always, with no
+    exception for a short outage. Anything else is refused. restore-open deposits one K_risk-signed restore
     line naming the attestation and the stretch, so the history says why the heads did not move. It
     exempts no gap.
   - **The one remaining assumption:** GitHub's scheduler and the store's clock (B2) are independent of
