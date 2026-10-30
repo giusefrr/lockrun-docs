@@ -110,6 +110,9 @@ T = 2500, 2M paths, 392 MiB at most.
 
 ## Running the scripts
 
+**Without lockrun's source:** [standalone/README.md](standalone/README.md) reproduces these tables with
+numpy alone, one command per table. The scripts below are the originals.
+
 The scripts import lockrun's package and its test worlds (`tests/adversary_world.py`,
 `tests/risk_world.py`). They need lockrun's source tree, which is not public at this writing; the
 copies in the public documents repository are for reading. With the source, run each from the
