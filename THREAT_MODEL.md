@@ -528,7 +528,8 @@ trading again for the last period (0.17) or weights times 1e-6 instead of zero (
    shrinking S toward its diagonal overstates a hedge's risk, and a hedge of two twin assets then
    passed at 0.06 to 0.14. A step is **inactive**, missing data, with no weights, no estimate, zero
    risk (weights in S's null space) or risk under 10% of the strategy's median active risk. Normalizing
-   by gross exposure instead missed a hedge (0.09) and spreading over 100 assets (0.088).
+   by gross exposure instead missed a hedge and spreading over 100 assets at n = 1 (fixed-T value: hedge
+   0.232, 100 assets 0.088; sequential value: hedge 0.0915, 100 assets 0.0285).
 2. **T_eff.** The statistic is the PSR statistic against 0, z = sr sqrt(T_eff - 1) / sqrt(1 - skew sr
    + (kurt - 1)/4 sr^2), on the active steps' normalized returns; T_eff, their number, is what min_t
    applies to.
@@ -574,7 +575,7 @@ implemented code (`tests/risk_world.py`; the suite pins the same cells with fewe
 | Only the lowest-variance asset | 0.035 (n = 1) | 0.0150 (n = 1) |
 | Pausing in the window covariance's null space (100 assets) | not run | 0.0125 / 0.0075 |
 | An asset whose volatility the window lags (falls tenfold) | not run | 0.0200 / 0.0175 |
-| Every trial stopping at c(n), n = 1 to 50, normal / Student-t(4) | not run | at most 0.0200 / 0.0280 |
+| Every trial stopping at c(n), n = 1 to 50, normal / Student-t(4) | not run | normal: at most 0.0205 over every stopping rule tried (0.0200 at the c(n) stop); Student-t(4): at most 0.0280 |
 
 Each adversary cell is the worst over its stopping rule (c from 1.5 to 3.5, first stop from period 2,
 3, 20 or 100). The calibration takes 19 to 23 s for T = 250 and 200 to 240 s for T = 2500 on one core
@@ -586,7 +587,7 @@ of a laptop (2M paths, 392 MiB at most); on the data host's droplet size it was 
   `tests/test_joint_bar_controls.py`). The 20-row warm-up leaves T_eff at most T - 20.
 - **An edge in sizing is not measured.** Returns over their ex-ante risk weigh every active step
   alike: a strategy that takes a larger position when its per-period Sharpe is known to be higher
-  loses that information (about a fifth of its t-statistic in the documented case). A strategy whose
+  loses that information (about 13% of the t-statistic (ratio 0.869; theoretical 0.83) in the documented case). A strategy whose
   edge lies only in timing its exposure is graded on its direction.
 - **Local mode** has no weights: every step of submitted returns is active, and the bar is calibrated
   at promote, at the df floor (no return column to fit).

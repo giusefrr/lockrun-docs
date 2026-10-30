@@ -7,6 +7,9 @@
   dropped      the rules tried and dropped
   sizing       what the rule does not measure: an edge in sizing, the warm-up (one seeded draw)
   cost         the calibration's time and memory on one core (--seeds does not apply)
+  assumptions  dependence and adaptive exposure, under the joint bar: (a) correlated trials, (b) a GARCH(1,1)
+               null, (c) an exposure rule that knows the risk estimator; --parts picks some, --window and
+               --warmup vary the estimator
   all          every table
 
 --compare prints the README's number beside each and flags a difference; meaningful only in full mode.
@@ -27,7 +30,7 @@ import joint_world as jw  # noqa: E402
 import readme_numbers as rn  # noqa: E402
 
 FULL_SEEDS, QUICK_SEEDS = 2000, 200
-TABLES = ("bar", "finding", "adversaries", "power", "dropped", "sizing", "cost")
+TABLES = ("bar", "finding", "adversaries", "power", "dropped", "sizing", "cost", "assumptions")
 
 
 def fmt(x) -> str:
@@ -86,6 +89,17 @@ def print_power(res, compare):
                   + ("" if all(round(a, 3) == b for a, b in zip(vals, rn.POWER[key])) else " DIFFERS"))
 
 
+def print_assumptions(res):
+    print("| Assumption | Joint bar (n = 1 / 2) | Worst stop (c, k0) | |")
+    for name, c in res.items():
+        if "at_cn" in c:
+            mark = jt.above_nominal(max(c["at_cn"], c["any_stop"]))
+            print(f"| {name} | at most {fmt(c['any_stop'])} over every stop tried ({fmt(c['at_cn'])} at the c(n) stop) | n {c['worst'][0]}, {c['worst'][1]} | {mark} |")
+        else:
+            mark = jt.above_nominal(max(c["n1"], c["n2"]))
+            print(f"| {name} | {fmt(c['n1'])} / {fmt(c['n2'])} | {c['worst1']} / {c['worst2']} | {mark} |")
+
+
 def print_mapping(res, compare):
     for name, v in res.items():
         print(f"{name}: " + ("  ".join(f"{k} {x:.4f}" for k, x in v.items()) if isinstance(v, dict) else f"{v}"))
@@ -107,17 +121,27 @@ def main() -> int:
     p.add_argument("--jobs", type=int, default=os.cpu_count(), help="worker processes (default: every core)")
     p.add_argument("--compare", action="store_true", help="print the README's number beside each, and flag a difference")
     p.add_argument("--json", help="also write the results here")
+    p.add_argument("--window", type=int, help="assumptions: the covariance window (default 60)")
+    p.add_argument("--warmup", type=int, help="assumptions: the warm-up (default 20)")
+    p.add_argument("--parts", default="abc", help="assumptions: which of a, b, c (default all)")
     a = p.parse_args()
+    if (a.window or a.warmup) and a.table != "assumptions":
+        p.error("--window and --warmup apply to the assumptions table only: the other tables are the rule as implemented")
+    rule = {**jw.P, "window": a.window or jw.P["window"], "warmup": a.warmup or jw.P["warmup"]}
+    if not 2 <= rule["warmup"] <= rule["window"]:
+        p.error("--window and --warmup must have 2 <= warmup <= window")
     seeds = a.seeds or (QUICK_SEEDS if a.quick else None)
     chunks = chunker(a.jobs)
     wanted = TABLES if a.table == "all" else (a.table,)
-    needs_bars = {"adversaries", "power"} & set(wanted)
+    needs_bars = {"adversaries", "power", "assumptions"} & set(wanted)
     t0 = time.perf_counter()
     bars = {}
     if needs_bars:
         bars["normal"] = jw.joint_bar()
         if "adversaries" in wanted and any(r.tail for r in jt.selected_rows(a.rows)):
             bars["t4"] = jw.t4_joint_bar()
+        if "assumptions" in wanted:
+            bars["garch"] = jw.garch_joint_bar()
     results = {}
     with Pool(a.jobs, initializer=jt.set_bars, initargs=(bars,)) as pool:
         for table in wanted:
@@ -138,6 +162,11 @@ def main() -> int:
             elif table == "dropped":
                 res = jt.dropped(seeds or FULL_SEEDS, pool, chunks)
                 print_mapping(res, a.compare)
+            elif table == "assumptions":
+                print(f"window {rule['window']}, warm-up {rule['warmup']}; GARCH innovations' df {jw.garch_df():g}, "
+                      f"its bar at df {bars['garch']['df']:g}; nominal 0.05")
+                res = jt.assumptions(seeds or FULL_SEEDS, pool, chunks, a.parts, rule)
+                print_assumptions(res)
             elif table == "sizing":
                 res = jt.sizing()
                 print_mapping(res, a.compare)

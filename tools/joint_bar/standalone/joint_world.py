@@ -8,6 +8,8 @@ package's worlds.
 """
 from __future__ import annotations
 
+import functools
+
 import numpy as np
 
 import joint_rule as jr
@@ -162,7 +164,8 @@ def regime_weights(W: np.ndarray, k: int | None) -> np.ndarray:
     return W
 
 
-def nullspace_weights(seed: int, i: int, R: np.ndarray, c: float, k0: int, nulls: dict | None = None) -> np.ndarray:
+def nullspace_weights(seed: int, i: int, R: np.ndarray, c: float, k0: int, nulls: dict | None = None,
+                      p: dict = P) -> np.ndarray:
     """In a universe larger than the window, the window's covariance is singular. After a losing active
     period the strategy holds a portfolio in its null space for one period (estimated risk zero: a pause the
     rule does not count); otherwise random weights; flat once ahead (running t of its active returns at
@@ -174,12 +177,12 @@ def nullspace_weights(seed: int, i: int, R: np.ndarray, c: float, k0: int, nulls
     paused = False
     nulls = {} if nulls is None else nulls
     for t in range(T):
-        rows = R[max(0, t - P["window"]):t]
+        rows = R[max(0, t - p["window"]):t]
         ahead = len(active) >= 2 and np.std(active, ddof=1) > 0 and \
             np.mean(active) / (np.std(active, ddof=1) / np.sqrt(len(active)))
         if active and t + 1 > k0 and ahead is not False and ahead >= c:
             break                                          # flat from here on
-        if len(rows) >= P["warmup"] and active and active[-1] < 0 and not paused:
+        if len(rows) >= p["warmup"] and active and active[-1] < 0 and not paused:
             if t not in nulls:
                 X = rows - rows.mean(0)
                 nulls[t] = np.linalg.svd(X)[2][np.linalg.matrix_rank(X):]
@@ -191,7 +194,7 @@ def nullspace_weights(seed: int, i: int, R: np.ndarray, c: float, k0: int, nulls
         w = rng.normal(size=A)
         W[t] = w / np.abs(w).sum()
         paused = False
-        if len(rows) >= P["warmup"]:
+        if len(rows) >= p["warmup"]:
             active.append(float(W[t] @ R[t]))
     return W
 
@@ -209,20 +212,109 @@ def strategy(seed: int, i: int, R: np.ndarray, cov: tuple, variant: tuple, c: fl
     return W if k is None else after_stop(W.copy(), k, variant, seed, i)
 
 
+# ---------------------------------------------------------------- the assumptions the table varies
+
+GARCH_ALPHA, GARCH_BETA = 0.1, 0.85
+GARCH_BURN = 200
+
+
+def market_vols(A: int) -> np.ndarray:
+    vol = np.geomspace(0.001, 0.02, A)
+    vol[-2] = vol[-1] = 0.01
+    return vol
+
+
+@functools.lru_cache(maxsize=1)
+def garch_df() -> float:
+    """The innovations' df: what the rule fits on the Student-t(4) market, its fat-tailed holdout."""
+    R = market(0, tail=4)
+    return float(jr.fit_df(jr.residuals({a: R[:, a] for a in range(R.shape[1])}))[0])
+
+
+def garch_market(seed: int, A: int = 8, df: float | None = None, regime: tuple | None = None) -> tuple:
+    """(returns, sigma): each asset an independent GARCH(1,1), h_t = (1 - alpha - beta) + alpha e_{t-1}^2 +
+    beta h_{t-1} on unit unconditional variance, Student-t(df) innovations of unit variance, times its
+    volatility; the last two assets twins, as in market(). sigma[t] is known before period t."""
+    df = garch_df() if df is None else df
+    rng = np.random.default_rng([seed, 20])
+    z = rng.standard_t(df, (T + GARCH_BURN, A)) / np.sqrt(df / (df - 2))
+    h, hs = np.ones(A), np.empty((T + GARCH_BURN, A))
+    for t in range(T + GARCH_BURN):
+        hs[t] = h
+        h = (1 - GARCH_ALPHA - GARCH_BETA) + GARCH_ALPHA * h * z[t] ** 2 + GARCH_BETA * h
+    vol = market_vols(A)
+    sigma = np.sqrt(hs[GARCH_BURN:]) * vol
+    R = z[GARCH_BURN:] * sigma
+    R[:, -1] = R[:, -2] + np.random.default_rng([seed, 5]).normal(0, 1e-4, T)
+    sigma[:, -1] = sigma[:, -2]
+    if regime is not None:
+        p, a, f = regime
+        R[p:, a] *= f
+        sigma[p:, a] *= f
+    return R, sigma
+
+
+def garch_joint_bar() -> dict:
+    """The bar at the df the rule fits on this market's holdout (seed 0, as t4_joint_bar)."""
+    R = garch_market(0)[0]
+    used, _ = jr.fit_df(jr.residuals({a: R[:, a] for a in range(R.shape[1])}))
+    return jr.calibrate(T, MIN_T, float(used), THRESHOLD, PATHS, SEED)
+
+
+def correlated_weights(seed: int, i: int, A: int, rho: float) -> np.ndarray:
+    """Trial i of a researcher whose trials share one latent signal: the weights' correlation across trials,
+    so their returns', is rho. Gross exposure 1 on average: per step, as base_weights, it would lower rho."""
+    latent = np.random.default_rng([seed, 13]).normal(size=(T, A))
+    own = np.random.default_rng([seed, i, 14]).normal(size=(T, A))
+    return (np.sqrt(rho) * latent + np.sqrt(1 - rho) * own) / (A * np.sqrt(2 / np.pi))
+
+
+def risk_aware_weights(kind: str, seed: int, i: int, R: np.ndarray, sigma: np.ndarray, cov: tuple) -> np.ndarray:
+    """An exposure rule that knows the risk estimator and the true risk (both known before period t):
+    scale   base_weights times true / estimated risk: as asked, though a normalized return does not move
+            with the size of w; it acts only through the 10% floor
+    select  the normalized return's variance is largest where the window most underestimates: all weight, a
+            random sign, on the asset with the largest true / estimated risk
+    pause   select, flat on the steps whose largest ratio is below the median of the ratios before them, so
+            that the steps counted are those where the window underestimates most."""
+    W = base_weights(seed, i, R.shape[1])
+    S, ok = cov
+    steps = np.flatnonzero(ok)
+    if kind == "scale":
+        true = (W[steps] ** 2 * sigma[steps] ** 2).sum(1) + 2 * W[steps, -2] * W[steps, -1] * sigma[steps, -2] ** 2
+        est = np.einsum("ti,tij,tj->t", W[steps], S, W[steps])
+        W[steps] *= np.sqrt(np.maximum(true, 0) / est)[:, None]
+        return W
+    ratio = sigma[steps] / np.sqrt(np.einsum("tii->ti", S))
+    best = ratio.argmax(1)
+    signs = np.random.default_rng([seed, i, 15]).choice([-1.0, 1.0], len(steps))
+    W[steps] = 0.0
+    W[steps, best] = signs
+    if kind == "pause":
+        top = ratio.max(1)
+        for j in range(1, len(steps)):
+            if top[j] < np.median(top[:j]):
+                W[steps[j]] = 0.0
+    return W
+
+
 class SeedWorld:
     """One seed's market, with what its cells share: the window covariances, each base strategy's first
-    crossings and every distinct strategy's trial. Decisions are those of building each cell from nothing."""
+    crossings and every distinct strategy's trial. Decisions are those of building each cell from nothing.
+    R: another market than market()'s; base(seed, i, A): another strategy than base_weights; p: another
+    window and warm-up."""
 
-    def __init__(self, seed: int, A: int = 8, **market_kw):
-        self.seed, self.A = seed, A
-        self.R = market(seed, A, **market_kw)
-        self.cov = jr.window_covariances(self.R)
+    def __init__(self, seed: int, A: int = 8, R: np.ndarray | None = None, base=None, p: dict = P, **market_kw):
+        self.seed, self.A, self.p = seed, A, p
+        self.R = market(seed, A, **market_kw) if R is None else R
+        self.cov = jr.window_covariances(self.R, p)
+        self._make = base or base_weights
         self._base, self._trials, self._nulls = {}, {}, {}
 
     def _watched(self, i: int, watch: str):
         key = (i, watch)
         if key not in self._base:
-            W = base_weights(self.seed, i, self.A)
+            W = self._make(self.seed, i, self.A)
             if watch == "norm":
                 t, idx = normalized_t(W, self.R, self.cov)
             else:
@@ -251,7 +343,7 @@ class SeedWorld:
     def _weights(self, i, variant, c, k0, watch, key):
         kind = variant[0]
         if kind == "nullspace":
-            return nullspace_weights(self.seed, i, self.R, c, k0, self._nulls)
+            return nullspace_weights(self.seed, i, self.R, c, k0, self._nulls, self.p)
         W = self._watched(i, watch)[0]
         if kind == "honest":
             return W
