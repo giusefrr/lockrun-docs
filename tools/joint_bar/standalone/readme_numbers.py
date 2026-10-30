@@ -27,246 +27,398 @@ AT_MOST = {"Every trial stopping at c(n), n = 1 to 50, normal market": 0.0200,
            "Every trial stopping at c(n), n = 1 to 50, Student-t(4) market": 0.0280}
 POWER = {"before": (0.015, 0.119, 0.413, 0.775, 0.962), "joint": (0.010, 0.099, 0.337, 0.690, 0.931)}
 ASSUMPTIONS = {
-    "(a) Trials sharing a latent signal, rho = 0.5: honest": (
-        0.0135,
-        0.0115
-    ),
-    "(a) Trials sharing a latent signal, rho = 0.5: flat once ahead": (
-        0.019,
-        0.0145
-    ),
-    "(a) Trials sharing a latent signal, rho = 0.9: honest": (
-        0.0125,
-        0.0075
-    ),
-    "(a) Trials sharing a latent signal, rho = 0.9: flat once ahead": (
-        0.02,
-        0.014
-    ),
-    "(b) GARCH(1,1) null: Honest, constant exposure": (
-        0.0085,
-        0.009
-    ),
-    "(b) GARCH(1,1) null: Honest, 10% random flat days": (
-        0.0075,
-        0.0075
-    ),
-    "(b) GARCH(1,1) null: Flat once ahead": (
-        0.014,
-        0.012
-    ),
-    "(b) GARCH(1,1) null: Flat, trading again for the last 1 period": (
-        0.0135,
-        0.0125
-    ),
-    "(b) GARCH(1,1) null: Flat, trading again for the last 2 periods": (
-        0.0125,
-        0.0115
-    ),
-    "(b) GARCH(1,1) null: Flat, trading again for the last 5 periods": (
-        0.01,
-        0.0125
-    ),
-    "(b) GARCH(1,1) null: Weights times 1e-6 once ahead": (
-        0.016,
-        0.013
-    ),
-    "(b) GARCH(1,1) null: Weights times 0.01 once ahead": (
-        0.016,
-        0.013
-    ),
-    "(b) GARCH(1,1) null: Weights times 0.05 once ahead": (
-        0.0135,
-        0.0125
-    ),
-    "(b) GARCH(1,1) null: Same gross over every asset, 8 assets": (
-        0.011,
-        0.0135
-    ),
-    "(b) GARCH(1,1) null: Same gross over every asset, 100 assets": (
-        0.01,
-        0.009
-    ),
-    "(b) GARCH(1,1) null: Hedge of two twin assets": (
-        0.0135,
-        0.011
-    ),
-    "(b) GARCH(1,1) null: Hedge with a drifting ratio": (
-        0.015,
-        0.0115
-    ),
-    "(b) GARCH(1,1) null: Only the lowest-variance asset": (
-        0.015,
-        0.012
-    ),
-    "(b) GARCH(1,1) null: Pausing in the window covariance's null space (100 assets)": (
-        0.0075,
-        0.005
-    ),
-    "(b) GARCH(1,1) null: An asset whose volatility the window lags (falls tenfold)": (
-        0.0175,
-        0.016
-    ),
-    "(b) GARCH(1,1) null: Every trial stopping, n = 1 to 50": (
-        0.0205,
-        0.0205
-    ),
-    "(c) Knows the estimator, iid market: weights times true / estimated risk": (
-        0.0205,
-        0.016
-    ),
-    "(c) Knows the estimator, iid market: all weight where the window most underestimates": (
-        0.014,
-        0.0175
-    ),
-    "(c) Knows the estimator, iid market: the same, flat where it underestimates least": (
-        0.004,
-        0.004
-    ),
-    "(c) Knows the estimator, GARCH market: weights times true / estimated risk": (
-        0.014,
-        0.012
-    ),
-    "(c) Knows the estimator, GARCH market: all weight where the window most underestimates": (
-        0.018,
-        0.0115
-    ),
-    "(c) Knows the estimator, GARCH market: the same, flat where it underestimates least": (
-        0.006,
-        0.0065
-    )
-}
-ASSUMPTIONS_WINDOWS = {
-    "(c) Knows the estimator, iid market: weights times true / estimated risk": {
-        "60/20": (
-            0.0205,
-            0.016
-        ),
-        "20/20": (
-            0.0195,
-            0.0165
-        ),
-        "120/20": (
-            0.0185,
-            0.017
-        ),
-        "250/20": (
-            0.018,
-            0.017
-        ),
-        "60/60": (
-            0.0095,
-            0.01
-        )
-    },
-    "(c) Knows the estimator, iid market: all weight where the window most underestimates": {
-        "60/20": (
-            0.014,
-            0.0175
-        ),
-        "20/20": (
-            0.0185,
-            0.0155
-        ),
-        "120/20": (
-            0.018,
-            0.016
-        ),
-        "250/20": (
-            0.013,
-            0.016
-        ),
-        "60/60": (
-            0.0165,
-            0.014
-        )
-    },
-    "(c) Knows the estimator, iid market: the same, flat where it underestimates least": {
-        "60/20": (
-            0.004,
-            0.004
-        ),
-        "20/20": (
-            0.0095,
-            0.0095
-        ),
-        "120/20": (
-            0.0025,
-            0.0025
-        ),
-        "250/20": (
-            0.001,
-            0.003
-        ),
-        "60/60": (
-            0.006,
-            0.0045
-        )
-    },
-    "(c) Knows the estimator, GARCH market: weights times true / estimated risk": {
-        "60/20": (
-            0.014,
-            0.012
-        ),
-        "20/20": (
-            0.0145,
-            0.014
-        ),
-        "120/20": (
-            0.012,
-            0.011
-        ),
-        "250/20": (
-            0.0115,
-            0.012
-        ),
-        "60/60": (
-            0.0135,
-            0.0095
-        )
-    },
-    "(c) Knows the estimator, GARCH market: all weight where the window most underestimates": {
-        "60/20": (
-            0.018,
-            0.0115
-        ),
-        "20/20": (
-            0.0195,
-            0.017
-        ),
-        "120/20": (
-            0.022,
-            0.0145
-        ),
-        "250/20": (
-            0.022,
-            0.0175
-        ),
-        "60/60": (
-            0.019,
-            0.0155
-        )
-    },
-    "(c) Knows the estimator, GARCH market: the same, flat where it underestimates least": {
-        "60/20": (
-            0.006,
-            0.0065
-        ),
-        "20/20": (
-            0.0085,
-            0.0085
-        ),
-        "120/20": (
-            0.0105,
-            0.0115
-        ),
-        "250/20": (
-            0.008,
-            0.008
-        ),
-        "60/60": (
-            0.005,
-            0.006
-        )
-    }
+ "iid, rho = 0.5: honest": {
+  "1": 0.014,
+  "2": 0.0125,
+  "3": 0.01,
+  "5": 0.0105,
+  "10": 0.009,
+  "20": 0.007
+ },
+ "iid, rho = 0.5: flat once ahead": {
+  "1": 0.033,
+  "2": 0.0295,
+  "3": 0.021,
+  "5": 0.026,
+  "10": 0.023,
+  "20": 0.023
+ },
+ "iid, rho = 0.9: honest": {
+  "1": 0.0125,
+  "2": 0.0075,
+  "3": 0.007,
+  "5": 0.0045,
+  "10": 0.0025,
+  "20": 0.001
+ },
+ "iid, rho = 0.9: flat once ahead": {
+  "1": 0.034,
+  "2": 0.026,
+  "3": 0.022,
+  "5": 0.018,
+  "10": 0.0125,
+  "20": 0.0085
+ },
+ "one-factor GARCH, rho = 0.5: honest": {
+  "1": 0.012,
+  "2": 0.01,
+  "3": 0.0095,
+  "5": 0.0045,
+  "10": 0.005,
+  "20": 0.0035
+ },
+ "one-factor GARCH, rho = 0.5: flat once ahead": {
+  "1": 0.0345,
+  "2": 0.0295,
+  "3": 0.022,
+  "5": 0.015,
+  "10": 0.017,
+  "20": 0.013
+ },
+ "one-factor GARCH, rho = 0.9: honest": {
+  "1": 0.0125,
+  "2": 0.009,
+  "3": 0.009,
+  "5": 0.0065,
+  "10": 0.0045,
+  "20": 0.0035
+ },
+ "one-factor GARCH, rho = 0.9: flat once ahead": {
+  "1": 0.033,
+  "2": 0.025,
+  "3": 0.016,
+  "5": 0.015,
+  "10": 0.0115,
+  "20": 0.0075
+ },
+ "GARCH: Honest, constant exposure": {
+  "1": 0.0085,
+  "2": 0.0095
+ },
+ "GARCH: Honest, 10% random flat days": {
+  "1": 0.0075,
+  "2": 0.0075
+ },
+ "GARCH: Flat once ahead": {
+  "1": 0.014,
+  "2": 0.0125
+ },
+ "GARCH: Flat, trading again for the last 1 period": {
+  "1": 0.0135,
+  "2": 0.013
+ },
+ "GARCH: Flat, trading again for the last 2 periods": {
+  "1": 0.0125,
+  "2": 0.012
+ },
+ "GARCH: Flat, trading again for the last 5 periods": {
+  "1": 0.01,
+  "2": 0.013
+ },
+ "GARCH: Weights times 1e-6 once ahead": {
+  "1": 0.016,
+  "2": 0.0135
+ },
+ "GARCH: Weights times 0.01 once ahead": {
+  "1": 0.016,
+  "2": 0.0135
+ },
+ "GARCH: Weights times 0.05 once ahead": {
+  "1": 0.0135,
+  "2": 0.012
+ },
+ "GARCH: Same gross over every asset, 8 assets": {
+  "1": 0.011,
+  "2": 0.0125
+ },
+ "GARCH: Same gross over every asset, 100 assets": {
+  "1": 0.01,
+  "2": 0.008
+ },
+ "GARCH: Hedge of two twin assets": {
+  "1": 0.0135,
+  "2": 0.0115
+ },
+ "GARCH: Hedge with a drifting ratio": {
+  "1": 0.015,
+  "2": 0.0105
+ },
+ "GARCH: Only the lowest-variance asset": {
+  "1": 0.0145,
+  "2": 0.0115
+ },
+ "GARCH: Pausing in the window covariance's null space (100 assets)": {
+  "1": 0.0075,
+  "2": 0.005
+ },
+ "GARCH: An asset whose volatility the window lags (falls tenfold)": {
+  "1": 0.0165,
+  "2": 0.0155
+ },
+ "GARCH: Every trial stopping, n = 1 to 50": {
+  "1": 0.021,
+  "2": 0.018,
+  "5": 0.0125,
+  "10": 0.0095,
+  "50": 0.0065
+ },
+ "One-factor GARCH: Honest, constant exposure": {
+  "1": 0.012,
+  "2": 0.0115
+ },
+ "One-factor GARCH: Honest, 10% random flat days": {
+  "1": 0.013,
+  "2": 0.0095
+ },
+ "One-factor GARCH: Flat once ahead": {
+  "1": 0.0165,
+  "2": 0.015
+ },
+ "One-factor GARCH: Flat, trading again for the last 1 period": {
+  "1": 0.016,
+  "2": 0.015
+ },
+ "One-factor GARCH: Flat, trading again for the last 2 periods": {
+  "1": 0.0155,
+  "2": 0.015
+ },
+ "One-factor GARCH: Flat, trading again for the last 5 periods": {
+  "1": 0.0145,
+  "2": 0.0145
+ },
+ "One-factor GARCH: Weights times 1e-6 once ahead": {
+  "1": 0.019,
+  "2": 0.0165
+ },
+ "One-factor GARCH: Weights times 0.01 once ahead": {
+  "1": 0.0185,
+  "2": 0.0155
+ },
+ "One-factor GARCH: Weights times 0.05 once ahead": {
+  "1": 0.0155,
+  "2": 0.0135
+ },
+ "One-factor GARCH: Same gross over every asset, 8 assets": {
+  "1": 0.0125,
+  "2": 0.011
+ },
+ "One-factor GARCH: Same gross over every asset, 100 assets": {
+  "1": 0.0175,
+  "2": 0.0145
+ },
+ "One-factor GARCH: Hedge of two twin assets": {
+  "1": 0.0165,
+  "2": 0.016
+ },
+ "One-factor GARCH: Hedge with a drifting ratio": {
+  "1": 0.014,
+  "2": 0.014
+ },
+ "One-factor GARCH: Only the lowest-variance asset": {
+  "1": 0.017,
+  "2": 0.012
+ },
+ "One-factor GARCH: Pausing in the window covariance's null space (100 assets)": {
+  "1": 0.0105,
+  "2": 0.0085
+ },
+ "One-factor GARCH: An asset whose volatility the window lags (falls tenfold)": {
+  "1": 0.013,
+  "2": 0.012
+ },
+ "One-factor GARCH: Every trial stopping, n = 1 to 50": {
+  "1": 0.0205,
+  "2": 0.018,
+  "5": 0.0165,
+  "10": 0.0105,
+  "50": 0.0145
+ },
+ "(1) Window's smallest eigenvalue, iid": {
+  "1": 0.0425,
+  "2": 0.029
+ },
+ "(1) Direction most underestimated, iid": {
+  "1": 0.03,
+  "2": 0.031
+ },
+ "(1) Window's smallest eigenvalue, iid, 30 equal assets": {
+  "1": 0.0395,
+  "2": 0.0405
+ },
+ "(1) Direction most underestimated, iid, 30 equal assets": {
+  "1": 0.0395,
+  "2": 0.0405
+ },
+ "(1) Window's smallest eigenvalue, iid, 50 equal assets": {
+  "1": 0.041,
+  "2": 0.0475
+ },
+ "(1) Direction most underestimated, iid, 50 equal assets": {
+  "1": 0.041,
+  "2": 0.0475
+ },
+ "(1) Window's smallest eigenvalue, iid, 58 equal assets": {
+  "1": 0.05,
+  "2": 0.0535
+ },
+ "(1) Direction most underestimated, iid, 58 equal assets": {
+  "1": 0.05,
+  "2": 0.0535
+ },
+ "(1) Window's smallest eigenvalue, GARCH": {
+  "1": 0.028,
+  "2": 0.02
+ },
+ "(1) Direction most underestimated, GARCH": {
+  "1": 0.0295,
+  "2": 0.0295
+ },
+ "(1) Window's smallest eigenvalue, GARCH, 50 assets": {
+  "1": 0.0425,
+  "2": 0.0505
+ },
+ "(1) Direction most underestimated, GARCH, 50 assets": {
+  "1": 0.0365,
+  "2": 0.0295
+ },
+ "(1) Window's smallest eigenvalue, one-factor GARCH": {
+  "1": 0.0325,
+  "2": 0.0275
+ },
+ "(1) Direction most underestimated, one-factor GARCH": {
+  "1": 0.033,
+  "2": 0.032
+ },
+ "(2) Trades above 1.5x, floor otherwise, iid": {
+  "1": 0.02,
+  "2": 0.0205
+ },
+ "(2) Trades above 2.0x, floor otherwise, iid": {
+  "1": 0.0335,
+  "2": 0.032
+ },
+ "(2) Trades above 3.0x, floor otherwise, iid": {
+  "1": 0.038,
+  "2": 0.031
+ },
+ "(2) Trades above 1.5x, floor otherwise, iid, 30 equal assets": {
+  "1": 0.0605,
+  "2": 0.083
+ },
+ "(2) Trades above 2.0x, floor otherwise, iid, 30 equal assets": {
+  "1": 0.0605,
+  "2": 0.083
+ },
+ "(2) Trades above 3.0x, floor otherwise, iid, 30 equal assets": {
+  "1": 0.062,
+  "2": 0.082
+ },
+ "(2) Trades above 1.5x, floor otherwise, iid, 50 equal assets": {
+  "1": 0.0525,
+  "2": 0.059
+ },
+ "(2) Trades above 2.0x, floor otherwise, iid, 50 equal assets": {
+  "1": 0.0505,
+  "2": 0.0575
+ },
+ "(2) Trades above 3.0x, floor otherwise, iid, 50 equal assets": {
+  "1": 0.0525,
+  "2": 0.059
+ },
+ "(2) Trades above 1.5x, floor otherwise, iid, 58 equal assets": {
+  "1": 0.066,
+  "2": 0.081
+ },
+ "(2) Trades above 2.0x, floor otherwise, iid, 58 equal assets": {
+  "1": 0.0665,
+  "2": 0.08
+ },
+ "(2) Trades above 3.0x, floor otherwise, iid, 58 equal assets": {
+  "1": 0.0665,
+  "2": 0.0795
+ },
+ "(3) Trades above 1.5x, floor otherwise, GARCH": {
+  "1": 0.027,
+  "2": 0.0285
+ },
+ "(3) Trades above 2.0x, floor otherwise, GARCH": {
+  "1": 0.0375,
+  "2": 0.0285
+ },
+ "(3) Trades above 3.0x, floor otherwise, GARCH": {
+  "1": 0.0385,
+  "2": 0.0295
+ },
+ "(3) Trades above 1.5x, floor otherwise, GARCH, 50 assets": {
+  "1": 0.047,
+  "2": 0.0495
+ },
+ "(3) Trades above 2.0x, floor otherwise, GARCH, 50 assets": {
+  "1": 0.048,
+  "2": 0.0495
+ },
+ "(3) Trades above 3.0x, floor otherwise, GARCH, 50 assets": {
+  "1": 0.048,
+  "2": 0.0515
+ },
+ "(3) Trades above 1.5x, floor otherwise, one-factor GARCH": {
+  "1": 0.031,
+  "2": 0.0295
+ },
+ "(3) Trades above 2.0x, floor otherwise, one-factor GARCH": {
+  "1": 0.0405,
+  "2": 0.034
+ },
+ "(3) Trades above 3.0x, floor otherwise, one-factor GARCH": {
+  "1": 0.032,
+  "2": 0.0255
+ },
+ "Pauses after each losing step, iid": {
+  "1": 0.031,
+  "2": 0.0255
+ },
+ "Pauses while behind, iid": {
+  "1": 0.022,
+  "2": 0.0205
+ },
+ "Pauses where the window overestimates, iid": {
+  "1": 0.018,
+  "2": 0.016
+ },
+ "Pauses after each losing step, iid, 50 equal assets": {
+  "1": 0.023,
+  "2": 0.017
+ },
+ "Pauses while behind, iid, 50 equal assets": {
+  "1": 0.0195,
+  "2": 0.0195
+ },
+ "Pauses where the window overestimates, iid, 50 equal assets": {
+  "1": 0.0195,
+  "2": 0.022
+ },
+ "Pauses after each losing step, GARCH": {
+  "1": 0.026,
+  "2": 0.025
+ },
+ "Pauses while behind, GARCH": {
+  "1": 0.0215,
+  "2": 0.02
+ },
+ "Pauses where the window overestimates, GARCH": {
+  "1": 0.02,
+  "2": 0.0165
+ },
+ "Pauses after each losing step, one-factor GARCH": {
+  "1": 0.025,
+  "2": 0.0235
+ },
+ "Pauses while behind, one-factor GARCH": {
+  "1": 0.0135,
+  "2": 0.0125
+ },
+ "Pauses where the window overestimates, one-factor GARCH": {
+  "1": 0.019,
+  "2": 0.02
+ }
 }

@@ -216,6 +216,7 @@ def strategy(seed: int, i: int, R: np.ndarray, cov: tuple, variant: tuple, c: fl
 
 GARCH_ALPHA, GARCH_BETA = 0.1, 0.85
 GARCH_BURN = 200
+FACTOR_SHARE = 0.5
 
 
 def market_vols(A: int) -> np.ndarray:
@@ -254,11 +255,9 @@ def garch_market(seed: int, A: int = 8, df: float | None = None, regime: tuple |
     return R, sigma
 
 
-def garch_joint_bar() -> dict:
-    """The bar at the df the rule fits on this market's holdout (seed 0, as t4_joint_bar)."""
-    R = garch_market(0)[0]
-    used, _ = jr.fit_df(jr.residuals({a: R[:, a] for a in range(R.shape[1])}))
-    return jr.calibrate(T, MIN_T, float(used), THRESHOLD, PATHS, SEED)
+def holdout_df(R: np.ndarray) -> float:
+    """The df the product fits on this holdout's residuals (lockrun/service/holdout_init.py, joint_bar)."""
+    return float(jr.fit_df(jr.residuals({a: R[:, a] for a in range(R.shape[1])}))[0])
 
 
 def correlated_weights(seed: int, i: int, A: int, rho: float) -> np.ndarray:
@@ -269,32 +268,142 @@ def correlated_weights(seed: int, i: int, A: int, rho: float) -> np.ndarray:
     return (np.sqrt(rho) * latent + np.sqrt(1 - rho) * own) / (A * np.sqrt(2 / np.pi))
 
 
-def risk_aware_weights(kind: str, seed: int, i: int, R: np.ndarray, sigma: np.ndarray, cov: tuple) -> np.ndarray:
-    """An exposure rule that knows the risk estimator and the true risk (both known before period t):
-    scale   base_weights times true / estimated risk: as asked, though a normalized return does not move
-            with the size of w; it acts only through the 10% floor
-    select  the normalized return's variance is largest where the window most underestimates: all weight, a
-            random sign, on the asset with the largest true / estimated risk
-    pause   select, flat on the steps whose largest ratio is below the median of the ratios before them, so
-            that the steps counted are those where the window underestimates most."""
-    W = base_weights(seed, i, R.shape[1])
+def factor_market(seed: int, A: int = 8, df: float | None = None, regime: tuple | None = None) -> tuple:
+    """(returns, sigma of the factor): one common GARCH(1,1) factor carrying FACTOR_SHARE of each asset's
+    variance, Student-t(df) idiosyncratic noise for the rest; the assets are correlated and their volatility
+    moves together. The last two assets twins. sigma[t], known before period t, is the factor's."""
+    df = garch_df() if df is None else df
+    rng = np.random.default_rng([seed, 21])
+    z = rng.standard_t(df, T + GARCH_BURN) / np.sqrt(df / (df - 2))
+    h, hs = 1.0, np.empty(T + GARCH_BURN)
+    for t in range(T + GARCH_BURN):
+        hs[t] = h
+        h = (1 - GARCH_ALPHA - GARCH_BETA) + GARCH_ALPHA * h * z[t] ** 2 + GARCH_BETA * h
+    f = (np.sqrt(hs) * z)[GARCH_BURN:]
+    e = np.random.default_rng([seed, 22]).standard_t(df, (T, A)) / np.sqrt(df / (df - 2))
+    vol = market_vols(A)
+    R = vol * (np.sqrt(FACTOR_SHARE) * f[:, None] + np.sqrt(1 - FACTOR_SHARE) * e)
+    R[:, -1] = R[:, -2] + np.random.default_rng([seed, 5]).normal(0, 1e-4, T)
+    if regime is not None:
+        p, a, g = regime
+        R[p:, a] *= g
+    return R, np.sqrt(hs[GARCH_BURN:])
+
+
+def equal_market(seed: int, A: int = 50) -> np.ndarray:
+    """A assets of one volatility, no twins: the window's smallest eigenvalue is its sampling error alone."""
+    return np.random.default_rng([seed, 0]).normal(0.0, 0.01, (T, A))
+
+
+def true_covariances(key: str, R: np.ndarray, sigma) -> np.ndarray:
+    """Sigma_t, what period t's return truly has, known before t. key: iid, equal, garch or factor."""
+    A = R.shape[1]
+    vol = market_vols(A)
+    if key == "equal":
+        return np.broadcast_to(np.eye(A) * 1e-4, (T, A, A)).copy()
+    if key == "factor":
+        S = np.empty((T, A, A))
+        S[:] = np.diag(vol ** 2 * (1 - FACTOR_SHARE))
+        S += FACTOR_SHARE * (sigma ** 2)[:, None, None] * np.outer(vol, vol)
+    else:
+        v2 = (np.broadcast_to(vol, (T, A)) if key == "iid" else sigma) ** 2
+        S = np.einsum("ti,ij->tij", v2, np.eye(A))
+    S[:, -1, -2] = S[:, -2, -1] = S[:, -2, -2]      # the twin is the asset before it
+    S[:, -1, -1] = S[:, -2, -2] + 1e-8              # and its tracking noise
+    return S
+
+
+def _smallest(values: np.ndarray, vectors: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Per step, the smallest eigenvalue that is not the null space's, and its eigenvector."""
+    live = values > 1e-8 * values[:, -1:]
+    at = live.argmax(1)
+    steps = np.arange(len(values))
+    return values[steps, at], vectors[steps, :, at]
+
+
+def smallest_eigen_direction(cov: tuple) -> np.ndarray:
+    """Each estimated step's direction of the window's smallest non-null eigenvalue, gross 1."""
+    d = _smallest(*np.linalg.eigh(cov[0]))[1]
+    return d / np.abs(d).sum(1, keepdims=True)
+
+
+def most_underestimated_direction(cov: tuple, Sigma: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """(the direction minimizing w' S w / w' Sigma w, gross 1; its true over estimated risk) per estimated
+    step: the generalized eigenproblem, through Sigma's Cholesky factor."""
     S, ok = cov
-    steps = np.flatnonzero(ok)
-    if kind == "scale":
-        true = (W[steps] ** 2 * sigma[steps] ** 2).sum(1) + 2 * W[steps, -2] * W[steps, -1] * sigma[steps, -2] ** 2
-        est = np.einsum("ti,tij,tj->t", W[steps], S, W[steps])
-        W[steps] *= np.sqrt(np.maximum(true, 0) / est)[:, None]
-        return W
-    ratio = sigma[steps] / np.sqrt(np.einsum("tii->ti", S))
-    best = ratio.argmax(1)
-    signs = np.random.default_rng([seed, i, 15]).choice([-1.0, 1.0], len(steps))
-    W[steps] = 0.0
-    W[steps, best] = signs
-    if kind == "pause":
-        top = ratio.max(1)
-        for j in range(1, len(steps)):
-            if top[j] < np.median(top[:j]):
-                W[steps[j]] = 0.0
+    L = np.linalg.cholesky(Sigma[ok])
+    Li = np.linalg.inv(L)
+    values, v = _smallest(*np.linalg.eigh(Li @ S @ Li.transpose(0, 2, 1)))
+    d = np.einsum("tji,tj->ti", Li, v)
+    return d / np.abs(d).sum(1, keepdims=True), 1 / np.sqrt(values)
+
+
+TARGET_RISK = 1e-5      # small enough that gross stays within 1; a normalized return ignores it
+
+
+def eigen_weights(direction: np.ndarray, seed: int, i: int, cov: tuple, A: int) -> np.ndarray:
+    """The whole gross in that direction every step it has an estimate, with a random sign; base weights
+    before (inactive steps: no estimate)."""
+    W = base_weights(seed, i, A)
+    ok = cov[1]
+    W[ok] = direction * np.random.default_rng([seed, i, 16]).choice([-1.0, 1.0], int(ok.sum()))[:, None]
+    return W
+
+
+def timed_weights(direction: np.ndarray, ratio: np.ndarray, factor: float, seed: int, i: int, cov: tuple,
+                  A: int) -> np.ndarray:
+    """Trades, at TARGET_RISK, only where true risk exceeds estimated risk by factor; elsewhere sits at the
+    10% floor of that risk on its base weights, so that every step stays active (exactly at the floor
+    when it trades at least half the steps, above it otherwise: the floor is a share of the median)."""
+    S, ok = cov
+    W = base_weights(seed, i, A)
+    b = W[ok]
+    d = direction * np.random.default_rng([seed, i, 16]).choice([-1.0, 1.0], int(ok.sum()))[:, None]
+    trade = ratio >= factor
+    w = np.where(trade[:, None], d, b)
+    est = np.sqrt(np.einsum("ti,tij,tj->t", w, S, w))
+    W[ok] = w * (np.where(trade, 1.0, jr.EXPOSURE["floor"] * (1 + 1e-9)) * TARGET_RISK / est)[:, None]
+    return W
+
+
+def pause_budget(cov: tuple) -> int:
+    """How many steps may pause so that T_eff stays above min_t: T - min_t - 1, the warm-up's among them."""
+    return T - MIN_T - 1 - int((~cov[1]).sum())
+
+
+def pausing_weights(rule: str, seed: int, i: int, R: np.ndarray, cov: tuple, Sigma: np.ndarray | None, c: float | None,
+                    k0: int | None, base=None) -> np.ndarray:
+    """Base weights, with zero weights on the steps a rule picks, within pause_budget, flat once ahead; it
+    stops only with more than min_t active steps, so that a run is not refused for too few.
+    losing  the step after a losing active step (not two in a row)
+    behind  while its running t-statistic is below 0
+    timed   where the window overestimates this step's true risk"""
+    W = base_weights(seed, i, R.shape[1]) if base is None else base.copy()
+    risk = jr.risks_of(W, cov)
+    budget = pause_budget(cov)
+    true = None if Sigma is None else np.sqrt(np.einsum("ti,tij,tj->t", W, Sigma, W))
+    n, s, q, last, paused = 0, 0.0, 0.0, None, False
+    for t in range(T):
+        if not np.isfinite(risk[t]) or risk[t] <= 0:
+            continue
+        ahead = n >= 2 and q - s * s / n > 0 and (s / n) / np.sqrt((q - s * s / n) / (n - 1) / n)
+        if c is not None and n > MIN_T and t + 1 >= k0 and ahead is not False and ahead >= c:
+            W[t:] = 0.0
+            break
+        if rule == "losing":
+            pause = last is not None and last < 0 and not paused
+        elif rule == "behind":
+            pause = ahead is not False and ahead < 0
+        else:
+            pause = true[t] < risk[t]
+        if pause and budget > 0:
+            W[t] = 0.0
+            budget -= 1
+            paused = True
+            continue
+        paused = False
+        x = float(W[t] @ R[t]) / risk[t]
+        n, s, q, last = n + 1, s + x, q + x * x, x
     return W
 
 
@@ -302,12 +411,13 @@ class SeedWorld:
     """One seed's market, with what its cells share: the window covariances, each base strategy's first
     crossings and every distinct strategy's trial. Decisions are those of building each cell from nothing.
     R: another market than market()'s; base(seed, i, A): another strategy than base_weights; p: another
-    window and warm-up."""
+    window and warm-up; min_active: it stops only with at least that many active steps."""
 
-    def __init__(self, seed: int, A: int = 8, R: np.ndarray | None = None, base=None, p: dict = P, **market_kw):
-        self.seed, self.A, self.p = seed, A, p
+    def __init__(self, seed: int, A: int = 8, R: np.ndarray | None = None, base=None, p: dict = P,
+                 cov: tuple | None = None, min_active: int = 0, **market_kw):
+        self.seed, self.A, self.p, self.min_active = seed, A, p, min_active
         self.R = market(seed, A, **market_kw) if R is None else R
-        self.cov = jr.window_covariances(self.R, p)
+        self.cov = jr.window_covariances(self.R, p) if cov is None else cov
         self._make = base or base_weights
         self._base, self._trials, self._nulls = {}, {}, {}
 
@@ -324,7 +434,7 @@ class SeedWorld:
 
     def crossing(self, i: int, c: float, k0: int, watch: str) -> int | None:
         _, t, idx = self._watched(i, watch)
-        hit = np.flatnonzero((idx >= k0 - 1) & (t >= c))
+        hit = np.flatnonzero((idx >= k0 - 1) & (t >= c) & (np.arange(len(t)) >= self.min_active - 1))
         return int(idx[hit[0]]) + 1 if hit.size else None
 
     def trial(self, i: int, variant: tuple, c: float | None, k0: int | None, watch: str) -> jr.Trial:

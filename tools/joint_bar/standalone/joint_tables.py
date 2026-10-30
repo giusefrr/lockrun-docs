@@ -67,15 +67,11 @@ def _passes(w: jw.SeedWorld, trials: list, jb: dict | None) -> bool:
     return any(h.joint(i, jb, jw.MIN_T, jw.THRESHOLD).passed for i in range(len(trials)))
 
 
-def _row_seed(row: Row, seed: int, before: bool, garch_p: dict | None = None) -> dict:
-    """{(column, n, c, k0): passed} of one row on one seed; garch_p: on the GARCH null, the bar at its fitted
-    df, with that window and warm-up."""
+def _row_seed(row: Row, seed: int, before: bool) -> dict:
+    """{(column, n, c, k0): passed} of one row on one seed."""
     out = {}
     if row.kind == "stopping":
-        if garch_p:
-            jb, w = JB["garch"], jw.SeedWorld(seed, 8, R=jw.garch_market(seed, 8)[0], p=garch_p)
-        else:
-            jb, w = JB["t4" if row.tail else "normal"], jw.SeedWorld(seed, 8, tail=row.tail)
+        jb, w = JB["t4" if row.tail else "normal"], jw.SeedWorld(seed, 8, tail=row.tail)
         for n in STOP_NS:
             for label in STOP_CS:
                 c = jr.bar(jb, n) + (0.3 if label == "c(n)+0.3" else 0.0) if isinstance(label, str) else label
@@ -84,16 +80,12 @@ def _row_seed(row: Row, seed: int, before: bool, garch_p: dict | None = None) ->
                 out[("joint", n, label, jw.MIN_T)] = _passes(w, trials, jb)
         return out
     market_kw = {"regime": jw.REGIME} if row.kind == "regime" else {}
-    if garch_p:
-        w = jw.SeedWorld(seed, row.A, R=jw.garch_market(seed, row.A, **market_kw)[0], p=garch_p)
-    else:
-        w = jw.SeedWorld(seed, row.A, **market_kw)
-    bar_of = JB["garch"] if garch_p else JB.get("normal")
+    w = jw.SeedWorld(seed, row.A, **market_kw)
     grid = {"fixed": [(None, None)], "grid": jw.GRID, "regime": jw.GRID, "nullspace": NULLSPACE_GRID}[row.kind]
     for c, k0 in grid:
         for n in (1, 2):
             joint = [w.trial(i, row.variant, c, k0, "norm") for i in range(n)]
-            out[("joint", n, c, k0)] = _passes(w, joint, bar_of)
+            out[("joint", n, c, k0)] = _passes(w, joint, JB["normal"])
             if before and row.kind in ("fixed", "grid"):
                 raw = [w.trial(i, row.variant, c, k0, "raw") for i in range(n)]
                 out[("before", n, c, k0)] = _passes(w, raw, None)
@@ -145,93 +137,6 @@ def adversaries(seeds: int, pool, chunks, rows: str | None = None, before: bool 
                         cells[f"{col}{n}"] = None
             out[row.name] = cells
         print(f"  ... {row.name}", file=sys.stderr, flush=True)
-    return out
-
-
-# ---------------------------------------------------------------- the assumptions
-
-NOMINAL = 0.05
-RHOS = (0.5, 0.9)
-AWARE = (("scale", "weights times true / estimated risk"), ("select", "all weight where the window most underestimates"),
-         ("pause", "the same, flat where it underestimates least"))
-
-
-def above_nominal(rate: float | None) -> str:
-    return "above nominal" if rate is not None and rate > NOMINAL else ""
-
-
-def _assumption_cells(spec: tuple, seed: int, p: dict) -> dict:
-    """{(n, c, k0): passed} of one row of the table on one seed."""
-    part, what, par = spec
-    if part == "b":
-        row = next(r for r in ROWS if r.name == what)
-        if row.tail:
-            return {}
-        return {k[1:]: v for k, v in _row_seed(row, seed, False, p).items()}
-    if part == "a":
-        w = jw.SeedWorld(seed, 8, base=lambda s, i, A: jw.correlated_weights(s, i, A, par), p=p)
-        jb = JB["normal"]
-    else:
-        if par == "garch":
-            R, sigma = jw.garch_market(seed, 8)
-            jb = JB["garch"]
-        else:
-            R, sigma = jw.market(seed, 8), np.broadcast_to(jw.market_vols(8), (jw.T, 8))
-            jb = JB["normal"]
-        cov = jr.window_covariances(R, p)
-        w = jw.SeedWorld(seed, 8, R=R, p=p, base=lambda s, i, A: jw.risk_aware_weights(what, s, i, R, sigma, cov))
-    honest = part == "a" and what == "honest"
-    out = {}
-    for c, k0 in ([(None, None)] if honest else [(None, None), *jw.GRID]):
-        v = ("honest", None) if c is None else ("flat", None)
-        for n in (1, 2):
-            out[(n, c, k0)] = _passes(w, [w.trial(i, v, c, k0, "norm") for i in range(n)], jb)
-    return out
-
-
-def assumption_counts(job: tuple) -> dict:
-    spec, seeds, p = job
-    counts: dict = {}
-    for seed in seeds:
-        for k, v in _assumption_cells(spec, seed, p).items():
-            counts[k] = counts.get(k, 0) + bool(v)
-    return counts
-
-
-def assumption_rows(parts: str) -> list:
-    rows = []
-    if "a" in parts:
-        rows += [(f"(a) Trials sharing a latent signal, rho = {rho}: {label}", ("a", what, rho))
-                 for rho in RHOS for what, label in (("honest", "honest"), ("flat", "flat once ahead"))]
-    if "b" in parts:
-        rows += [(f"(b) GARCH(1,1) null: {'Every trial stopping, n = 1 to 50' if r.kind == 'stopping' else r.name}",
-                  ("b", r.name, None)) for r in ROWS if not r.tail]
-    if "c" in parts:
-        rows += [(f"(c) Knows the estimator, {mkt} market: {label}", ("c", what, m))
-                 for m, mkt in (("iid", "iid"), ("garch", "GARCH")) for what, label in AWARE]
-    return rows
-
-
-def assumptions(seeds: int, pool, chunks, parts: str, p: dict) -> dict:
-    out = {}
-    for name, spec in assumption_rows(parts):
-        total: dict = {}
-        for part in pool.imap_unordered(assumption_counts, [(spec, s, p) for s in chunks(seeds)]):
-            for k, v in part.items():
-                total[k] = total.get(k, 0) + v
-        cells = {}
-        ns = sorted({k[0] for k in total})
-        if spec[1] == "Every trial stopping at c(n), n = 1 to 50, normal market":
-            h = max(v for k, v in total.items() if k[1] == "c(n)")
-            top = max(total.items(), key=lambda x: x[1])
-            cells = {"at_cn": h / seeds, "any_stop": top[1] / seeds, "worst": top[0]}
-        else:
-            for n in ns:
-                c = max(((v, k) for k, v in total.items() if k[0] == n), key=lambda x: x[0])
-                cells[f"n{n}"] = c[0] / seeds
-                cells[f"worst{n}"] = c[1][1:]
-        out[name] = cells
-        print(f"  ... {name}", file=sys.stderr, flush=True)
     return out
 
 

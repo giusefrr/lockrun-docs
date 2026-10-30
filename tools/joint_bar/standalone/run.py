@@ -7,9 +7,10 @@
   dropped      the rules tried and dropped
   sizing       what the rule does not measure: an edge in sizing, the warm-up (one seeded draw)
   cost         the calibration's time and memory on one core (--seeds does not apply)
-  assumptions  dependence and adaptive exposure, under the joint bar: (a) correlated trials, (b) a GARCH(1,1)
-               null, (c) an exposure rule that knows the risk estimator; --parts picks some, --window and
-               --warmup vary the estimator
+  assumptions  dependence and adaptive exposure, under the joint bar as the product runs it, every holdout its
+               own df fit and bar: (a) correlated trials, (b) the main table on GARCH markets, (c) adversaries
+               with the estimator's state, (d) pauses within a budget; --parts picks some, --window and --warmup
+               vary the estimator
   all          every table
 
 --compare prints the README's number beside each and flags a difference; meaningful only in full mode.
@@ -25,11 +26,14 @@ for _v in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "VECLIB
 
 from multiprocessing import Pool, get_context  # noqa: E402
 
+import joint_assumptions as aj  # noqa: E402
 import joint_tables as jt  # noqa: E402
 import joint_world as jw  # noqa: E402
 import readme_numbers as rn  # noqa: E402
 
 FULL_SEEDS, QUICK_SEEDS = 2000, 200
+CALIBRATION_PATHS, QUICK_PATHS = 2_000_000, 100_000     # the product's; the quick mode's
+QUICK_ASSUMPTION_SEEDS = 50
 TABLES = ("bar", "finding", "adversaries", "power", "dropped", "sizing", "cost", "assumptions")
 
 
@@ -89,15 +93,25 @@ def print_power(res, compare):
                   + ("" if all(round(a, 3) == b for a, b in zip(vals, rn.POWER[key])) else " DIFFERS"))
 
 
+PARTS = {"a": "(a) Correlated trials", "b": "(b) The main table on GARCH markets, each holdout its own bar",
+         "c": "(c) Adversaries with the estimator's state", "d": "(d) Pauses within the budget, T_eff above min_t"}
+
+
 def print_assumptions(res):
-    print("| Assumption | Joint bar (n = 1 / 2) | Worst stop (c, k0) | |")
-    for name, c in res.items():
-        if "at_cn" in c:
-            mark = jt.above_nominal(max(c["at_cn"], c["any_stop"]))
-            print(f"| {name} | at most {fmt(c['any_stop'])} over every stop tried ({fmt(c['at_cn'])} at the c(n) stop) | n {c['worst'][0]}, {c['worst'][1]} | {mark} |")
-        else:
-            mark = jt.above_nominal(max(c["n1"], c["n2"]))
-            print(f"| {name} | {fmt(c['n1'])} / {fmt(c['n2'])} | {c['worst1']} / {c['worst2']} | {mark} |")
+    """Each cell: the worst rate over its stops, the first trial's median T_eff there, the share refused."""
+    for part, title in PARTS.items():
+        rows = {k: v for k, v in res.items() if v["part"] == part}
+        if not rows:
+            continue
+        ns = next(iter(rows.values()))["ns"]
+        print(f"\n### {title}\n\n| Row | " + " | ".join(f"n = {n}" for n in ns) + " | |\n|--|" + "--|" * (len(ns) + 1))
+        for name, v in rows.items():
+            cells = [v["cells"][n] for n in v["ns"]]
+            marks = ", ".join(sorted({f"n = {n}" for n in v["ns"] if aj.above_nominal(v["cells"][n]["rate"])}))
+            line = " | ".join(f"{c['rate']:.4f} (T_eff {c['t_eff']:g}, {c['refused']:.0%} refused)" for c in cells)
+            extra = f" n = {'/'.join(map(str, v['ns']))}:" if v["ns"] != ns else ""
+            traded = f" traded {v['traded']:.0%} of steps;" if "traded" in v else ""
+            print(f"| {name} |{extra} {line} |{traded} {'above nominal: ' + marks if marks else ''} |")
 
 
 def print_mapping(res, compare):
@@ -123,8 +137,12 @@ def main() -> int:
     p.add_argument("--json", help="also write the results here")
     p.add_argument("--window", type=int, help="assumptions: the covariance window (default 60)")
     p.add_argument("--warmup", type=int, help="assumptions: the warm-up (default 20)")
-    p.add_argument("--parts", default="abc", help="assumptions: which of a, b, c (default all)")
+    p.add_argument("--parts", default="abcd", help="assumptions: which of a, b, c, d (default all)")
+    p.add_argument("--first-seed", type=int, default=0, help="assumptions: start from this seed (fresh seeds confirm a cell)")
+    p.add_argument("--bar-cache", help="assumptions: keep each df's table in this directory")
     a = p.parse_args()
+    if (a.first_seed or a.bar_cache) and a.table != "assumptions":
+        p.error("--first-seed and --bar-cache apply to the assumptions table only")
     if (a.window or a.warmup) and a.table != "assumptions":
         p.error("--window and --warmup apply to the assumptions table only: the other tables are the rule as implemented")
     rule = {**jw.P, "window": a.window or jw.P["window"], "warmup": a.warmup or jw.P["warmup"]}
@@ -133,15 +151,13 @@ def main() -> int:
     seeds = a.seeds or (QUICK_SEEDS if a.quick else None)
     chunks = chunker(a.jobs)
     wanted = TABLES if a.table == "all" else (a.table,)
-    needs_bars = {"adversaries", "power", "assumptions"} & set(wanted)
+    needs_bars = {"adversaries", "power"} & set(wanted)
     t0 = time.perf_counter()
     bars = {}
     if needs_bars:
         bars["normal"] = jw.joint_bar()
         if "adversaries" in wanted and any(r.tail for r in jt.selected_rows(a.rows)):
             bars["t4"] = jw.t4_joint_bar()
-        if "assumptions" in wanted:
-            bars["garch"] = jw.garch_joint_bar()
     results = {}
     with Pool(a.jobs, initializer=jt.set_bars, initargs=(bars,)) as pool:
         for table in wanted:
@@ -163,10 +179,20 @@ def main() -> int:
                 res = jt.dropped(seeds or FULL_SEEDS, pool, chunks)
                 print_mapping(res, a.compare)
             elif table == "assumptions":
-                print(f"window {rule['window']}, warm-up {rule['warmup']}; GARCH innovations' df {jw.garch_df():g}, "
-                      f"its bar at df {bars['garch']['df']:g}; nominal 0.05")
-                res = jt.assumptions(seeds or FULL_SEEDS, pool, chunks, a.parts, rule)
+                n_seeds = a.seeds or (QUICK_ASSUMPTION_SEEDS if a.quick else FULL_SEEDS)
+                rows = aj.rows_of(a.parts)
+                if a.rows:
+                    rows = [r for r in rows if any(w.strip().lower() in r.name.lower() for w in a.rows.split(","))]
+                paths = QUICK_PATHS if a.quick else CALIBRATION_PATHS
+                shifted = lambda n: [range(r.start + a.first_seed, r.stop + a.first_seed) for r in chunks(n)]  # noqa: E731
+                prep = aj.prepare_bars(rows, n_seeds, paths, pool, shifted, a.bar_cache)
+                print(f"window {rule['window']}, warm-up {rule['warmup']}; GARCH innovations' df {jw.garch_df():g}; "
+                      f"{len(prep['bars'])} distinct fitted dfs, a {paths}-path table each; nominal 0.05")
+                with Pool(a.jobs, initializer=aj.set_bars, initargs=(prep["bars"],)) as inner:
+                    res = aj.assumptions(rows, n_seeds, inner, shifted, rule)
                 print_assumptions(res)
+                print("\nfitted df per market: " + ", ".join(f"{k} {lo:g} to {hi:g}" for k, (lo, hi) in sorted(prep["df_range"].items())))
+                res = {"rows": res, "df_range": prep["df_range"], "distinct_dfs": len(prep["bars"])}
             elif table == "sizing":
                 res = jt.sizing()
                 print_mapping(res, a.compare)
