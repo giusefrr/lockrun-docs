@@ -540,8 +540,10 @@ under the rule in force since that day (the joint bar); for case 4, before it to
 | 7 | Wide junk to inflate V, tight junk to shrink it | 0 in 2600 | `test_adversary_variance.py` |
 | 8 | Nondeterminism: runs A and B differ, or the fresh run does | never promotable; junk around candidates 0 in 1300 | `test_adversary_nondeterminism.py` |
 
-Case 4 is the one that did not hold: a strategy that goes flat once its running t-statistic is high
-keeps that statistic while the PSR counts every period. Rules that looked at zeros (a terminal run of
+**Scope.** Every result here is a result about lockrun's complete procedure (its exposure rules, risk normalization and stopping criterion), measured by simulation under the stated nulls. No theoretical claim about the PSR or the DSR as results is made.
+
+Case 4 is the one that did not hold: in lockrun's procedure before the joint bar, whose statistic counted
+every period, a strategy that goes flat once its running t-statistic is high kept that statistic. Rules that looked at zeros (a terminal run of
 zero weights) or normalized by gross exposure were each simulated and evaded (trading again at the
 end, tiny weights, a hedge, diversifying); the rule adopted grades returns over their ex-ante risk on
 their active periods against a bar calibrated for a researcher free to stop (THREAT_MODEL.md §5a, with
@@ -551,7 +553,8 @@ counts twice in N.
 
 **Rule version 2 (30 October 2026).** An adversary that knows the risk estimator, on a universe near
 the window's size (58 equal assets, a 60-row window), passed version 1 at up to 0.0858 on 8000 fresh
-seeds: one constructed outlier shrank the PSR's denominator. Under the plain t its worst cell is 0.0498
+seeds: in those simulated runs one constructed outlier lowered the denominator of version 1's statistic.
+Under the plain t its worst cell is 0.0498
 on 8000 fresh seeds, no cell above nominal of the 288 (5 were on the first 2000 seeds, at the worst stop,
 at most 0.0550); shrinkage, a longer window, an eigenvalue floor,
 a risk floor and winsorizing were measured and dropped (THREAT_MODEL.md §5a, with the numbers and the

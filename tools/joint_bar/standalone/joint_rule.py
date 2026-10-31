@@ -7,11 +7,12 @@ module and the package on the same seeded inputs and requires identical decision
   Holdout.before(i)   the DSR as before the rule of 27 October 2026: the PSR on all T against sr0, with N
                       every opening plus the reserved fresh verification and V floored at the null
                       variance; the lowest of five families' values against the threshold.
-  Holdout.joint(i)    the joint bar: z, the plain t-statistic on returns over their ex-ante risk,
+  Holdout.joint(i)    the joint bar: z, the plain t-statistic on returns over their ex-ante risk (rule version 2),
                       F(z / scale)^n against the threshold in each of the five families, the scale
                       leaving the candidate out, n every opening but fresh verifications. stat="psr": the
-                      rule before, whose z is the PSR statistic against 0 (what lockrun's package runs today,
-                      and what its suite compares this copy with).
+                      rule before, rule version 1, whose z is the PSR statistic against 0 (what a holdout
+                      initialised before 30 October 2026 keeps; lockrun's suite compares this copy with the
+                      package under both).
 """
 from __future__ import annotations
 

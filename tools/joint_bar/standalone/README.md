@@ -1,5 +1,7 @@
 # The joint bar, standalone: every number without lockrun's source
 
+**Scope.** Every result here is a result about lockrun's complete procedure (its exposure rules, risk normalization and stopping criterion), measured by simulation under the stated nulls. No theoretical claim about the PSR or the DSR as results is made.
+
 This directory reproduces the numbers of [the joint bar's README](../README.md) with numpy alone. It
 does not import lockrun. `joint_rule.py` is the rule and the DSR's evaluation before it, `joint_world.py`
 the null markets and the adversaries, `joint_tables.py` one function per table, `run.py` the commands.
@@ -11,9 +13,10 @@ table the same on 8000 fresh seeds and on the first 200, in rate, T_eff and refu
 the suite's exact pins, which CI runs on Linux. The counts are identical, not every bit: statistics differ by up to
 1.2e-8 between those two libraries, so a t within that distance of a bar could decide differently; on those seeds none did.
 
-lockrun's suite (`tests/test_joint_bar_standalone.py`) runs this copy under `--stat psr` and the package on
-the same seeded inputs and requires identical PASS decisions, statistics, weights and bars, so the copy cannot
-drift from the product's rule before; the plain t, the default here, is pinned by its own numbers below.
+lockrun's suite (`tests/test_joint_bar_standalone.py`, `tests/test_rule_variants_parity.py`) runs this copy and
+the package on the same seeded inputs under both statistics, the plain t (rule version 2, the default here and in
+the product) and `--stat psr` (version 1), and requires identical PASS decisions, statistics, weights and bars, so
+the copy cannot drift from either version of the product's rule.
 
 ## Install
 
@@ -31,7 +34,7 @@ From this directory's parent or from here; each prints its table with the README
 | Command | What it prints | Full mode on this laptop |
 |--|--|--|
 | `python run.py bar` | c(n) (500k paths, seed 20261027) | 7 s |
-| `python run.py finding` | Optional stopping under the DSR | 2 s |
+| `python run.py finding` | Flat once ahead, under lockrun's procedure before the joint bar | 2 s |
 | `python run.py adversaries` | Every variant, before and under the joint bar | 252 s |
 | `python run.py adversaries --rows flat,hedge,honest` | Only the rows whose names contain these | about 60 s |
 | `python run.py power` | The honest power cost | 1 s |
@@ -47,17 +50,18 @@ From this directory's parent or from here; each prints its table with the README
 - `--seeds N`: seeds 0 to N-1 per cell. Full mode, the default, is 2000 (`finding`: 10000, 3000 and 2000 by
   row). `bar`, `sizing` and `cost` take no seeds.
 - `--quick`: 200 seeds per cell (50 and 100k-path bars in `assumptions`), a smoke test whose rates are noisy, not the README's numbers. `python run.py all --quick --jobs 2` took 5 min 53 s on this laptop limited to 2 worker processes; it was not timed on a 2-core machine.
-- `--stat psr`: on `bar`, `adversaries`, `power` and `assumptions`, the rule before instead of the plain t.
+- `--stat psr`: on `bar`, `adversaries`, `power` and `assumptions`, rule version 1 (the PSR statistic) instead of
+  version 2 (the plain t), the default of every command.
 - `--jobs N`: worker processes (default: every core). `--compare`: the README's number beside each, a
   difference flagged. `--json FILE`: the results.
 
-## The rule: the plain t, window 60, warm-up 20
+## The rule, version 2: the plain t, window 60, warm-up 20
 
-The default of every command here. z is the plain t-statistic of the returns over their ex-ante risk, with no skew or kurtosis term, and the bar is the sup of that same t on null paths. `--stat psr` gives the rule before, whose statistic has the PSR's denominator. lockrun's package still runs the PSR statistic until its statistic change lands, so the suite's comparison with the package is under `--stat psr`.
+The default of every command here. z is the plain t-statistic of the returns over their ex-ante risk, with no skew or kurtosis term, and the bar is the sup of that same t on null paths. `--stat psr` gives the rule before, whose statistic has the PSR's denominator. The plain t is lockrun's default as rule version 2 since 30 October 2026; a holdout initialised before keeps version 1, the PSR statistic, which `--stat psr` runs here.
 
 **Above nominal, nominal 0.05: on the first 2000 seeds, at the worst stop per cell, 5 of 288 cells, worst 0.0550 ((3) Trades above 1.5x, floor otherwise, GARCH, n = 2), a figure that carries the selection over stops. That cell is 0.0440 on 8000 fresh seeds at the stop the first 2000 chose. On those fresh seeds no cell of the 288 is above nominal: the worst is 0.0498 ((3) Trades above 3.0x, floor otherwise, GARCH, n = 1), standard error 0.0024.**
 
-| The finding | Before: PSR statistic | After: plain t |
+| The finding | Version 1: PSR statistic | Version 2: plain t |
 |--|--|--|
 | Worst cell, 8000 fresh seeds at the stop the first 2000 chose | 0.0858 above nominal | 0.0498 |
 | Its row | (2) Trades above 3.0x, floor otherwise, iid, 58 equal assets, n = 2 | (3) Trades above 3.0x, floor otherwise, GARCH, n = 1 |
@@ -67,13 +71,13 @@ Worst hedge 0.0208. Worst pause within the budget 0.0372, T_eff at least 101. An
 
 Seeds 2000 to 9999, each cell at the stop the first 2000 seeds chose, so these rates carry no selection over stops; a cell is not re-maximized over stops on the fresh seeds. "First 2000" is seeds 0 to 1999 at the worst stop, which carries that selection. Every holdout gets its df fit and a 2M-path bar, as the product's procedure does. Only 60/20 is confirmed on fresh seeds; the other windows are in the section below, at 2000 seeds.
 
-Commands: `python run.py fixes --only A --out DIR` (about 15 minutes per window, 2000 seeds), then `python run.py confirm --out DIR --first-seed 2000 --seeds 8000 --leaders "A, window 60, warm-up 20"` (27 minutes).
+Commands, version 2: `python run.py fixes --only A --out DIR` (about 15 minutes per window, 2000 seeds), then `python run.py confirm --out DIR --first-seed 2000 --seeds 8000 --leaders "A, window 60, warm-up 20"` (27 minutes).
 
 | True annualized Sharpe | 0 | 1 | 2 | 3 | 4 |
 |--|--|--|--|--|--|
-| PASS, plain t, 8000 fresh seeds | 0.0114 | 0.0890 | 0.3515 | 0.7239 | 0.9356 |
-| PASS, plain t, first 2000 | 0.0100 | 0.1000 | 0.3325 | 0.6895 | 0.9300 |
-| PASS, PSR statistic, first 2000 | 0.0100 | 0.0995 | 0.3370 | 0.6905 | 0.9315 |
+| PASS, version 2 (plain t), 8000 fresh seeds | 0.0114 | 0.0890 | 0.3515 | 0.7239 | 0.9356 |
+| PASS, version 2 (plain t), first 2000 | 0.0100 | 0.1000 | 0.3325 | 0.6895 | 0.9300 |
+| PASS, version 1 (PSR statistic), first 2000 | 0.0100 | 0.0995 | 0.3370 | 0.6905 | 0.9315 |
 
 ### The full table on fresh seeds
 
@@ -269,8 +273,8 @@ The C candidates bound one normalized return. C1: a risk under f times the media
 On a 10-core Apple Silicon laptop, numpy 2.5.3, 30 October 2026. Seeds 0 to N-1, N as stated; a cell is
 the worst over its stopping rule (c from 1.5 to 3.5, first stop at period 2, 3, 20 or 100).
 
-    Plain t:       c(1) 2.277  c(2) 2.585  c(5) 2.949  c(10) 3.193  c(50) 3.713  c(100) 3.927  c(1000) 4.530
-    PSR statistic: c(1) 2.252  c(2) 2.552  c(5) 2.906  c(10) 3.146  c(50) 3.662  c(100) 3.854  c(1000) 4.418
+    Version 2, plain t:       c(1) 2.277  c(2) 2.585  c(5) 2.949  c(10) 3.193  c(50) 3.713  c(100) 3.927  c(1000) 4.530
+    Version 1, PSR statistic: c(1) 2.252  c(2) 2.552  c(5) 2.906  c(10) 3.146  c(50) 3.662  c(100) 3.854  c(1000) 4.418
 
 | Strategy (null market, T = 250) | N | PASS under the DSR | Seeds | c, k0 |
 |--|--|--|--|--|
@@ -282,7 +286,7 @@ the worst over its stopping rule (c from 1.5 to 3.5, first stop at period 2, 3, 
 
 2000 seeds per cell:
 
-| Researcher strategy | DSR, before the joint bar (n = 1 / 2) | Joint bar, PSR statistic (n = 1 / 2) | Joint bar, plain t (n = 1 / 2) |
+| Researcher strategy | DSR, before the joint bar (n = 1 / 2) | Joint bar, version 1: PSR statistic (n = 1 / 2) | Joint bar, version 2: plain t (n = 1 / 2) |
 |--|--|--|--|
 | Honest, constant exposure | 0.0115 / 0.0020 | 0.0135 / 0.0105 | 0.0130 / 0.0105 |
 | Honest, 10% random flat days | 0.0140 / 0.0020 | 0.0140 / 0.0100 | 0.0135 / 0.0095 |
@@ -306,8 +310,8 @@ the worst over its stopping rule (c from 1.5 to 3.5, first stop at period 2, 3, 
 | True annualized Sharpe | 0 | 1 | 2 | 3 | 4 |
 |--|--|--|--|--|--|
 | PASS before (DSR) | 0.015 | 0.119 | 0.413 | 0.775 | 0.962 |
-| PASS with the joint bar, PSR statistic | 0.010 | 0.099 | 0.337 | 0.690 | 0.931 |
-| PASS with the joint bar, plain t | 0.010 | 0.099 | 0.331 | 0.688 | 0.930 |
+| PASS with the joint bar, version 1 (PSR statistic) | 0.010 | 0.099 | 0.337 | 0.690 | 0.931 |
+| PASS with the joint bar, version 2 (plain t) | 0.010 | 0.099 | 0.331 | 0.688 | 0.930 |
 
 Rules tried and dropped, 2000 seeds:
 
@@ -331,15 +335,15 @@ The rule's t over the raw t on a sizing edge: 0.869 (seed 3, T = 20000). Largest
 The calibration on one core, 2M paths, in two runs: T = 250 normal 20 and 25 s, df = 4.2 27 and 37 s,
 T = 2500 243 and 304 s; 408 MiB at most. Timings depend on the machine and what else runs on it.
 
-## The rule before: the assumptions table under the PSR statistic
+## The rule before, version 1: the assumptions table under the PSR statistic
 
-Everything from here is `--stat psr`, where the excess was found.
+Everything from here is `--stat psr`, rule version 1, where the excess was found.
 
 **Above nominal, nominal 0.05: an adversary that sets the whole gross in the direction the window most underestimates, with every step kept active, passes at up to 0.0900 (n = 2, 2000 seeds), 0.0858 on 8000 fresh seeds at the stop the first 2000 chose (22 of 70 of these cells above nominal there), and 0.0905 at a window of 120 or 250.** Dependence (at most 0.0345), GARCH markets replaying every row of the main table (at most 0.0210) and pauses within the budget (at most 0.0310) stay below nominal.
 
-Why: the excess comes from the PSR statistic's denominator, not from the bar or the risk estimate's mean. With a universe close to the window, the smallest eigenvalue is close to zero on some steps, so one step's normalized return is about 25 to 36 times the median, the largest of a run at the median run (factor 1.5 and 3.0). A positive one gives the series large skew, and sqrt(1 - skew sr + (kurt - 1)/4 sr^2) falls well below 1: on attack (2) with no stop, runs that pass have a median t-statistic of 1.60 to 2.07, under the bar of about 2.25, and a median of that term of 0.58 to 0.78 (0.93 to 0.97 over all runs). With no stop at factor 1.5, on 1500 seeds and a 100k-path bar, z passes at 0.034 (58 assets) and 0.041 (30 assets) while the t-statistic against the same bar passes at 0.011 and 0.004. A scale alone changes no normalized return, so the (2) rows exceed the (1) rows only because scaling keeps those steps above the 10% floor.
+Why, in these runs of lockrun's procedure: version 1's excess came from the denominator of the statistic as this procedure computes it on its normalized returns, not from the bar or the risk estimate's mean. With a universe close to the window, the smallest eigenvalue is close to zero on some steps, so one step's normalized return is about 25 to 36 times the median, the largest of a run at the median run (factor 1.5 and 3.0). A positive one gives the series large skew, and sqrt(1 - skew sr + (kurt - 1)/4 sr^2) falls well below 1: on attack (2) with no stop, runs that pass have a median t-statistic of 1.60 to 2.07, under the bar of about 2.25, and a median of that term of 0.58 to 0.78 (0.93 to 0.97 over all runs). With no stop at factor 1.5, on 1500 seeds and a 100k-path bar, z passes at 0.034 (58 assets) and 0.041 (30 assets) while the t-statistic against the same bar passes at 0.011 and 0.004. A scale alone changes no normalized return, so the (2) rows exceed the (1) rows only because scaling keeps those steps above the 10% floor.
 
-Command: `python standalone/run.py assumptions --stat psr`, with `--parts a,b,c,d`, `--rows`, `--window`, `--warmup` and `--first-seed`; no lockrun needed. Each holdout gets the product's own procedure: its df fitted on its residuals, its bar from 2M paths, seed 20261027 (174 distinct dfs in the table, each exactly the calibration that holdout would get). 2000 seeds, 0 to 1999, unless stated. A cell is the worst over its stops, so a cell near 0.05 carries that selection; the fresh seeds below do not. T_eff is the first trial's median at that stop; "refused" is the share of runs under min_t. Rows above nominal say so.
+Command: `python standalone/run.py assumptions --stat psr` (version 1), with `--parts a,b,c,d`, `--rows`, `--window`, `--warmup` and `--first-seed`; no lockrun needed. Each holdout gets the product's own procedure: its df fitted on its residuals, its bar from 2M paths, seed 20261027 (174 distinct dfs in the table, each exactly the calibration that holdout would get). 2000 seeds, 0 to 1999, unless stated. A cell is the worst over its stops, so a cell near 0.05 carries that selection; the fresh seeds below do not. T_eff is the first trial's median at that stop; "refused" is the share of runs under min_t. Rows above nominal say so.
 
 ### Confirmed on fresh seeds
 

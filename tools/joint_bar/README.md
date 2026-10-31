@@ -1,17 +1,19 @@
 # The joint bar: the simulations behind lockrun's statistical rule of 27 October 2026
 
+**Scope.** Every result here is a result about lockrun's complete procedure (its exposure rules, risk normalization and stopping criterion), measured by simulation under the stated nulls. No theoretical claim about the PSR or the DSR as results is made.
+
 lockrun counts every backtest run against a protected holdout, so a strategy's Deflated Sharpe Ratio
-(DSR) is computed with the true number of trials N. These scripts show that a correct N is not
-enough, and they measured the rule that replaced the DSR's verdict. They are for an external
+(DSR) is computed with the true number of trials N. These scripts show that in lockrun's procedure a
+correct N was not enough, and they measured the rule that replaced the DSR as that procedure's verdict. They are for an external
 reviewer, the DSR's authors among them, to rerun and to vary. The rule is stated in full in
 [THREAT_MODEL.md §5a](../../THREAT_MODEL.md#5a-statistical-rule-the-joint-bar-27-october-2026); this
 page gives the finding, the rule in short, every number and the one command that prints it.
 
-## The finding: optional stopping passes the DSR at 0.27, nominal 0.05
+## The finding: flat once ahead passed lockrun's earlier procedure at 0.27, nominal 0.05
 
-A strategy that watches its own running t-statistic and goes flat (zero weights) once it is ahead
-keeps the t-statistic of its first k periods, while the PSR counts all T periods: the zeros dilute
-nothing. Under the DSR with N correct (every opening counted, and one more reserved for the fresh
+In lockrun's procedure before the joint bar, whose statistic was computed over all T periods, a strategy
+that watches its own running t-statistic and goes flat (zero weights) once it is ahead kept the t-statistic
+of its first k periods. Under that procedure's verdict, the DSR with N correct (every opening counted, and one more reserved for the fresh
 verification), at a nominal false-positive rate of 0.05, on a null market (iid zero-mean returns):
 
 | Strategy (null market, T = 250) | PASS rate under the DSR |
@@ -37,7 +39,7 @@ repeats these strategies with 2000 seeds and the stopping grid of the later roun
    holdout initialised since 30 October 2026), the plain t-statistic z = sr sqrt(T_eff); under version 1
    (a holdout initialised before), the PSR statistic against 0, z = sr sqrt(T_eff - 1) / sqrt(1 - skew
    sr + (kurt - 1)/4 sr^2). T_eff, the number of active steps, is what the minimum track record min_t
-   applies to. Version 2 is the candidate A of `standalone/` (the PSR's denominator under one constructed
+   applies to. Version 2 is the candidate A of `standalone/` (version 1's result under one constructed
    outlier, below); THREAT_MODEL.md §5a has the candidates measured and dropped, with the reasons.
 3. **The joint bar c(N).** F is the null CDF of sup over k in [min_t, T] of z_k for one trial (the
    researcher may stop at any k), simulated with iid Student-t returns at the holdout's fitted df
@@ -84,7 +86,7 @@ to 3.5, first stop at period 2, 3, 20 or 100).
 | Pausing in the window covariance's null space (100 assets) | not run | 0.0135 / 0.0115 |
 | An asset whose volatility the window lags (falls tenfold) | not run | 0.0200 / 0.0175 |
 | Every trial stopping at c(n), n = 1 to 50, normal market | not run | at most 0.0205 over every stopping rule tried (0.0200 at the c(n) stop) |
-| Every trial stopping at c(n), n = 1 to 50, Student-t(4) market | not run | 0.0280 on this row. Worst cell of the whole table: 0.0498 on fresh seeds under the plain-t rule; the PSR rule reached 0.0858 against an estimator-aware adversary (below, and [standalone/README.md](standalone/README.md)). |
+| Every trial stopping at c(n), n = 1 to 50, Student-t(4) market | not run | 0.0280 on this row. Worst cell of the whole table: 0.0498 on fresh seeds under the plain-t rule; version 1 of the procedure reached 0.0858 against an estimator-aware adversary (below, and [standalone/README.md](standalone/README.md)). |
 
 | Column | Command |
 |--|--|
@@ -96,14 +98,14 @@ Rules that were tried and dropped, with their numbers: normalizing by gross expo
 and the 100-asset spread at n = 1 (fixed-T value: hedge 0.232, 100 assets 0.088; sequential value: hedge
 0.0915, 100 assets 0.0285), `round2_rules.py`; shrinking S toward its diagonal by
 0.01 or more gave the hedge back its excess (0.06 to 0.14), `round3_sensitivity.py`; composing a
-sequential critical value with the DSR's sr0 was valid but 0.2 to 0.9 t-units too high,
+sequential critical value with the DSR's sr0 held in these simulations but was 0.2 to 0.9 t-units too high,
 `round2_composition.py` and `round2_joint_quantiles.py`.
 
 ## The assumptions: dependence and adaptive exposure rules
 
 **Above nominal under rule version 1 (the PSR statistic), nominal 0.05: an adversary that sets the whole gross in the direction the window most underestimates, with every step kept active, passes at up to 0.0900 (n = 2, 2000 seeds), 0.0858 on 8000 fresh seeds at the stop the first 2000 chose (22 of 70 of these cells above nominal there), and 0.0905 at a window of 120 or 250.** Dependence (at most 0.0345), GARCH markets replaying every row of the main table (at most 0.0210) and pauses within the budget (at most 0.0310) stay below nominal.
 
-Why: the excess comes from the PSR statistic's denominator, not from the bar or the risk estimate's mean. With a universe close to the window, the smallest eigenvalue is close to zero on some steps, so one step's normalized return is about 25 to 36 times the median, the largest of a run at the median run (factor 1.5 and 3.0). A positive one gives the series large skew, and sqrt(1 - skew sr + (kurt - 1)/4 sr^2) falls well below 1: on attack (2) with no stop, runs that pass have a median t-statistic of 1.60 to 2.07, under the bar of about 2.25, and a median of that term of 0.58 to 0.78 (0.93 to 0.97 over all runs). With no stop at factor 1.5, on 1500 seeds and a 100k-path bar, z passes at 0.034 (58 assets) and 0.041 (30 assets) while the t-statistic against the same bar passes at 0.011 and 0.004. A scale alone changes no normalized return, so the (2) rows exceed the (1) rows only because scaling keeps those steps above the 10% floor.
+Why, in these runs of lockrun's procedure: version 1's excess came from the denominator of the statistic as this procedure computes it on its normalized returns, not from the bar or the risk estimate's mean. With a universe close to the window, the smallest eigenvalue is close to zero on some steps, so one step's normalized return is about 25 to 36 times the median, the largest of a run at the median run (factor 1.5 and 3.0). A positive one gives the series large skew, and sqrt(1 - skew sr + (kurt - 1)/4 sr^2) falls well below 1: on attack (2) with no stop, runs that pass have a median t-statistic of 1.60 to 2.07, under the bar of about 2.25, and a median of that term of 0.58 to 0.78 (0.93 to 0.97 over all runs). With no stop at factor 1.5, on 1500 seeds and a 100k-path bar, z passes at 0.034 (58 assets) and 0.041 (30 assets) while the t-statistic against the same bar passes at 0.011 and 0.004. A scale alone changes no normalized return, so the (2) rows exceed the (1) rows only because scaling keeps those steps above the 10% floor.
 
 Command: `python standalone/run.py assumptions --stat psr`, with `--parts a,b,c,d`, `--rows`, `--window`, `--warmup` and `--first-seed`; no lockrun needed. Each holdout gets the product's own procedure: its df fitted on its residuals, its bar from 2M paths, seed 20261027 (174 distinct dfs in the table, each exactly the calibration that holdout would get). 2000 seeds, 0 to 1999, unless stated. A cell is the worst over its stops, so a cell near 0.05 carries that selection; the fresh seeds below do not. T_eff is the first trial's median at that stop; "refused" is the share of runs under min_t. Rows above nominal say so.
 

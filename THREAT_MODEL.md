@@ -517,10 +517,12 @@ versions of the rule are in force, each holdout under the one it was initialised
 2, the plain t-statistic, for every holdout initialised since 30 October 2026; version 1, the PSR
 statistic, for those initialised before.
 
-**The problem: optional stopping.** A strategy that watches its own running t-statistic and goes
-flat once it is ahead keeps the t-statistic of its first k periods, while the PSR counts all T: the
-zeros dilute nothing. Under the DSR (with the fresh verification reserved in N), the best such rule
-passed at 0.27 with one trial and 0.08 with two, against a nominal 0.05; the same strategy played
+**Scope.** Every result here is a result about lockrun's complete procedure (its exposure rules, risk normalization and stopping criterion), measured by simulation under the stated nulls. No theoretical claim about the PSR or the DSR as results is made.
+
+**The problem: optional stopping.** In lockrun's procedure before the joint bar, whose statistic was
+computed over all T periods, a strategy that watches its own running t-statistic and goes flat once it is
+ahead kept the t-statistic of its first k periods. Under that procedure's verdict (the DSR with the fresh
+verification reserved in N), simulated on a null market, the best such rule passed at 0.27 with one trial and 0.08 with two, against a nominal 0.05; the same strategy played
 honestly passed at 0.015 (plan item 3, case 4). A rule on a terminal run of zero weights did not hold:
 trading again for the last period (0.17) or weights times 1e-6 instead of zero (0.27) kept the excess.
 
@@ -558,10 +560,10 @@ trading again for the last period (0.17) or weights times 1e-6 instead of zero (
 assumptions`) gave an adversary the estimator's state: on a universe near the window's size (58 equal
 assets, a 60-row window), it puts the whole gross in the direction the window's covariance most
 underestimates, at a fixed risk where the true risk exceeds the estimate, every step active. One
-normalized return then dwarfs the others; its skew and kurtosis shrink the PSR's denominator and lift z
-far above the t-statistic. **Under version 1 that passed at 0.0900 (n = 2, 2000 seeds), 0.0858 on 8000
+normalized return then dwarfs the others; in these runs its skew and kurtosis lowered the denominator of
+version 1's statistic and lifted z far above the t-statistic. **Under version 1 that passed at 0.0900 (n = 2, 2000 seeds), 0.0858 on 8000
 fresh seeds at the stop the first 2000 chose, and 0.0905 at a window of 120 or 250**, nominal 0.05. The
-PSR denominator was manipulable by one constructed outlier on a near-singular window.
+In this procedure, on a near-singular window, one constructed outlier was enough for that result.
 
 Candidates, each measured over the assumptions and main tables at windows 20, 60, 120 and 250 and
 warm-ups 20 and 60, with honest power, 2000 seeds (`run.py fixes`; C1 and C2 on the rows that decide them
@@ -628,7 +630,7 @@ of a laptop (2M paths, 392 MiB at most); on the data host's droplet size it was 
 
 Version 1's column is the PSR statistic. The plain-t rule, z the t-statistic with no skew or kurtosis
 term and the bar the sup of that t, is in the product as version 2 (its column above), and the standalone
-copy measures it over the whole assumptions table. Worst cell of the whole table: 0.0498 on fresh seeds under the plain-t rule; the PSR rule reached 0.0858 against an estimator-aware adversary. On those 8000
+copy measures it over the whole assumptions table. Worst cell of the whole table: 0.0498 on fresh seeds under the plain-t rule; version 1 of the procedure reached 0.0858 against an estimator-aware adversary. On those 8000
 fresh seeds no cell of the 288 is above nominal; on the first 2000 seeds, at the worst stop, 5 are, the
 worst 0.0550, a figure that carries the selection over stops.
 
@@ -645,8 +647,8 @@ worst 0.0550, a figure that carries the selection over stops.
 - **Holdouts initialised before the rule** have no joint bar: their promotes are refused until the
   holdout is initialised again.
 - **The plain t ignores skew and kurtosis** in the statistic: the tail is in the calibration only,
-  through the df fitted on the holdout's residuals. The PSR's correction for them is what the outlier
-  exploited; a skewed honest strategy is graded as if symmetric.
+  through the df fitted on the holdout's residuals. In the runs above, version 1's skew and kurtosis term is
+  where the constructed outlier acted; a skewed honest strategy is graded as if symmetric.
 
 **Open for review.**
 - The independence assumption: c(n) is the quantile of the maximum of n independent trials. Trials on

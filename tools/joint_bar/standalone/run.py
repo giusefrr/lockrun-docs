@@ -1,6 +1,7 @@
 """One command per table of tools/joint_bar/README.md: python standalone/run.py <table> [--seeds N | --quick]
 
-  --stat psr on bar, adversaries, power and assumptions: the rule before; the default is the plain t.
+  --stat psr on bar, adversaries, power and assumptions: rule version 1, the PSR statistic; the default is rule
+  version 2, the plain t, lockrun's default since 30 October 2026.
 
   bar          c(n), the holdout the checks use (500k paths, seed 20261027; --seeds does not apply)
   finding      optional stopping under the DSR (10000, 3000 and 2000 seeds per row in full mode)
@@ -293,7 +294,7 @@ def main() -> int:
     p.add_argument("--warmup", type=int, help="assumptions: the warm-up (default 20)")
     p.add_argument("--parts", default="abcd", help="assumptions: which of a, b, c, d (default all)")
     p.add_argument("--first-seed", type=int, default=0, help="assumptions: start from this seed (fresh seeds confirm a cell)")
-    p.add_argument("--stat", choices=("psr", "t"), help="bar, adversaries, power, assumptions: the statistic (default t, the plain t; psr, the rule before)")
+    p.add_argument("--stat", choices=("psr", "t"), help="bar, adversaries, power, assumptions: the statistic (default t, rule version 2, the plain t; psr, rule version 1)")
     p.add_argument("--cov", choices=aj.COVS, default="sample", help="assumptions: the covariance estimate (default the product's)")
     p.add_argument("--out", help="fixes: the directory for each configuration's results")
     p.add_argument("--bar-cache", help="assumptions: keep each df's table in this directory")
