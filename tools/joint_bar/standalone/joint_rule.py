@@ -7,9 +7,11 @@ module and the package on the same seeded inputs and requires identical decision
   Holdout.before(i)   the DSR as before the rule of 27 October 2026: the PSR on all T against sr0, with N
                       every opening plus the reserved fresh verification and V floored at the null
                       variance; the lowest of five families' values against the threshold.
-  Holdout.joint(i)    the joint bar: z, the PSR statistic against 0 on returns over their ex-ante risk,
+  Holdout.joint(i)    the joint bar: z, the plain t-statistic on returns over their ex-ante risk,
                       F(z / scale)^n against the threshold in each of the five families, the scale
-                      leaving the candidate out, n every opening but fresh verifications.
+                      leaving the candidate out, n every opening but fresh verifications. stat="psr": the
+                      rule before, whose z is the PSR statistic against 0 (what lockrun's package runs today,
+                      and what its suite compares this copy with).
 """
 from __future__ import annotations
 
@@ -24,6 +26,7 @@ import numpy as np
 EULER_GAMMA = 0.5772156649
 _NORMAL = NormalDist()
 EXPOSURE = {"window": 60, "warmup": 20, "floor": 0.1}
+DEFAULT_STAT = "t"
 NULL_RATIO = 1e-10
 NORMAL_DF = 200
 DF_FLOOR = 4
@@ -178,9 +181,11 @@ def window_covariances(R: np.ndarray, p: dict = EXPOSURE) -> tuple[np.ndarray, n
     return S, ok
 
 
-def risks_of(W: np.ndarray, cov: tuple) -> np.ndarray:
+def risks_of(W: np.ndarray, cov) -> np.ndarray:
     """sqrt(w' S w) per step: 0 for no weights or the null space (variance at most NULL_RATIO times the
     weights' variance with no correlation), NaN where there is no estimate."""
+    if isinstance(cov, Estimator):
+        return cov.risks(W)
     S, ok = cov
     out = np.full(len(W), np.nan)
     w = W[ok]
@@ -189,6 +194,141 @@ def risks_of(W: np.ndarray, cov: tuple) -> np.ndarray:
     out[ok] = np.where((uncorrelated == 0) | (var <= NULL_RATIO * uncorrelated), 0.0, np.sqrt(np.maximum(var, 0)))
     out[~(W != 0).any(1)] = 0.0
     return out
+
+
+def shrink_toward_diagonal(X: np.ndarray) -> np.ndarray:
+    """The sample covariance of rows X, shrunk toward its diagonal by the estimator's own intensity (Ledoit &
+    Wolf 2004, for this target as in Schaefer & Strimmer 2005): the off-diagonals' estimated sampling variance
+    over their squares, within [0, 1]."""
+    n, k = X.shape
+    C = X - X.mean(0)
+    P = C.T @ C
+    S = P / (n - 1)
+    if k < 2:
+        return S
+    Y = C * C
+    off = ~np.eye(k, dtype=bool)
+    num = (n / (n - 1) ** 3) * ((Y.T @ Y) - P * P / n)[off].sum()
+    den = (S[off] ** 2).sum()
+    d = 1.0 if den == 0 else min(1.0, max(0.0, num / den))
+    return (1 - d) * S + d * np.diag(np.diag(S))
+
+
+EIGEN_FLOOR = 0.01
+MIN_WINDOW_PER_ASSET = 3
+
+
+class Estimator:
+    """A candidate covariance estimate (statistical rule, standalone only; the product's is the sample
+    covariance): per set of held assets, as the rule's S is.
+    lw        S shrunk toward its diagonal, the intensity chosen by the estimator
+    minwin    a window, and a warm-up, of at least 3 times the held assets
+    eigfloor  a step whose smallest window eigenvalue is under 1% of the median eigenvalue is inactive
+    Iterates as (S, ok) over every asset, the state an adversary knows."""
+
+    def __init__(self, R: np.ndarray, p: dict):
+        self.R, self.p, self.kind = R, p, p["cov"]
+        self._by_mask: dict = {}
+        self.A = R.shape[1]
+        self.S, self.ok, _ = self._state(np.ones(self.A, bool))
+
+    def __iter__(self):
+        return iter((self.S, self.ok))
+
+    def __getitem__(self, i):
+        return (self.S, self.ok)[i]
+
+    def _state(self, mask: np.ndarray) -> tuple:
+        key = mask.tobytes()
+        if key not in self._by_mask:
+            self._by_mask[key] = self._compute(mask)
+        return self._by_mask[key]
+
+    def _compute(self, mask: np.ndarray) -> tuple:
+        R, p = self.R[:, mask], self.p
+        k, Tn = R.shape[1], R.shape[0]
+        if self.kind == "minwin":
+            least = MIN_WINDOW_PER_ASSET * k
+            window, warmup = max(p["window"], least), max(p["warmup"], least)
+        else:
+            window, warmup = p["window"], p["warmup"]
+        if self.kind == "lw":
+            t = np.arange(Tn)
+            ok = t - np.maximum(0, t - window) >= warmup
+            S = np.empty((int(ok.sum()), k, k))
+            for j, s in enumerate(np.flatnonzero(ok)):
+                S[j] = shrink_toward_diagonal(R[max(0, s - window):s])
+            return S, ok, None
+        S, ok = window_covariances(R, {"window": window, "warmup": warmup})
+        inactive = None
+        if self.kind == "eigfloor":
+            v = np.linalg.eigvalsh(S) if len(S) else np.empty((0, k))
+            inactive = v[:, 0] < EIGEN_FLOOR * np.median(v, axis=1)
+        return S, ok, inactive
+
+    def risks(self, W: np.ndarray) -> np.ndarray:
+        out = np.full(len(W), np.nan)
+        held = W != 0
+        out[~held.any(1)] = 0.0
+        for mask in np.unique(held[held.any(1)], axis=0):
+            steps = (held == mask).all(1)
+            S, ok, inactive = self._state(mask)
+            at = np.flatnonzero(ok[steps])                       # among these steps, those with an estimate
+            where = np.flatnonzero(steps)[at]
+            index = np.cumsum(ok) - 1
+            w = W[where][:, mask]
+            s = S[index[where]]
+            var = np.einsum("ti,tij,tj->t", w, s, w)
+            un = np.einsum("ti,tii->t", w * w, s)
+            r = np.where((un == 0) | (var <= NULL_RATIO * un), 0.0, np.sqrt(np.maximum(var, 0)))
+            if inactive is not None:
+                r = np.where(inactive[index[where]], 0.0, r)
+            out[where] = r
+        return out
+
+
+class BoundedCov(tuple):
+    """The sample covariance's (S, ok), with a candidate's bound on one normalized return (statistical rule,
+    standalone only):
+    risk_floor  f: a step's risk under f x the median of the strategy's risks > 0 is raised to it and stays active;
+                a step with no estimate or zero risk stays inactive
+    winsor      k: each normalized return, of ex-ante sd 1 by construction, clipped to [-k, k]"""
+
+    def __new__(cls, pair: tuple, risk_floor: float | None = None, winsor: float | None = None):
+        self = super().__new__(cls, pair)
+        self.risk_floor, self.winsor = risk_floor, winsor
+        return self
+
+
+def estimator(R: np.ndarray, p: dict = EXPOSURE):
+    """The state risks_of needs: the sample covariance's (S, ok) unless p names another estimate or a bound."""
+    if p.get("cov", "sample") != "sample":
+        return Estimator(R, p)
+    pair = window_covariances(R, p)
+    return BoundedCov(pair, p.get("risk_floor"), p.get("winsor")) if p.get("risk_floor") or p.get("winsor") else pair
+
+
+def winsorized(x: np.ndarray, k: float) -> np.ndarray:
+    return np.clip(x, -k, k)
+
+
+def bounded_returns(r: np.ndarray, risk: np.ndarray, cov, floor_of: float | None = None) -> np.ndarray:
+    """r / risk on the steps given, under cov's bound. floor_of: the floor, when not these steps' own."""
+    f, k = getattr(cov, "risk_floor", None), getattr(cov, "winsor", None)
+    if f:
+        live = np.isfinite(risk) & (risk > 0)
+        floor = floor_of if floor_of is not None else f * float(np.median(risk[live])) if live.any() else np.nan
+        risk = np.maximum(risk, floor)
+    x = r / risk
+    return winsorized(x, k) if k else x
+
+
+def bounded_steps(W: np.ndarray, risk: np.ndarray, cov) -> np.ndarray:
+    """The active steps under cov's bound: a floor keeps every step with an estimate and risk > 0. A
+    winsorization leaves them the rule's."""
+    if not getattr(cov, "risk_floor", None):
+        return active_steps(risk)
+    return np.flatnonzero(np.isfinite(risk) & (risk > 0))
 
 
 def risks_panel(W: np.ndarray, R: np.ndarray, p: dict = EXPOSURE) -> np.ndarray:
@@ -262,6 +402,15 @@ def sup_z(x: np.ndarray, min_t: int) -> np.ndarray:
     return np.nanmax(np.where(np.isfinite(z), z, np.nan), 1)
 
 
+def sup_t(x: np.ndarray, min_t: int) -> np.ndarray:
+    """sup over k in [min_t, T] of the plain t-statistic of the first k returns, per row of x."""
+    k = np.arange(1, x.shape[1] + 1, dtype=float)[min_t - 1:]
+    s1, s2 = (np.cumsum(x ** p, 1)[:, min_t - 1:] for p in (1, 2))
+    with np.errstate(invalid="ignore", divide="ignore"):
+        t = (s1 / k) / np.sqrt((s2 - s1 * s1 / k) / (k - 1) / k)
+    return np.nanmax(np.where(np.isfinite(t), t, np.nan), 1)
+
+
 def levels(threshold: float, paths: int) -> list[float]:
     body = [round(p, 4) for p in np.linspace(0.01, 0.99, 99)]
     deepest = math.log10(paths) - 0.5
@@ -275,16 +424,20 @@ def start_k(T: int, min_t: int) -> int:
 
 
 @functools.lru_cache(maxsize=16)
-def calibrate(T: int, min_t: int, df: float, threshold: float, paths: int, seed: int) -> dict:
-    """F's quantiles: the null CDF of sup z_k for one trial, iid Student-t(df) returns (normal from
-    NORMAL_DF), `paths` paths drawn in order from default_rng(seed)."""
+def calibrate(T: int, min_t: int, df: float, threshold: float, paths: int, seed: int, stat: str = DEFAULT_STAT) -> dict:
+    """F's quantiles: the null CDF of the sup of the plain t for one trial, iid Student-t(df) returns (normal
+    from NORMAL_DF), `paths` paths drawn in order from default_rng(seed). stat "psr": of sup z_k;
+    "w3": of the plain t of draws of unit variance, what a normalized return has, clipped to [-3, 3] first."""
+    sup = sup_t if stat == "t" or stat.startswith("w") else sup_z
+    clip = float(stat[1:]) if stat.startswith("w") else None
+    unit = 1.0 if df >= NORMAL_DF else math.sqrt(df / (df - 2))
     rng = np.random.default_rng(seed)
     chunk = max(1000, int(2.5e8 / (12 * 8 * T)))
     sups = []
     for start in range(0, paths, chunk):
         n = min(chunk, paths - start)
         x = rng.normal(size=(n, T)) if df >= NORMAL_DF else rng.standard_t(float(df), size=(n, T))
-        sups.append(sup_z(x, start_k(T, min_t)))
+        sups.append(sup(x if clip is None else winsorized(x / unit, clip), start_k(T, min_t)))
     s = np.sort(np.concatenate(sups))
     ps = levels(threshold, paths)
     qs = np.quantile(s, ps)
@@ -335,6 +488,13 @@ class Trial:
 
 def trial_of_weights(W: np.ndarray, R: np.ndarray, cov: tuple) -> Trial:
     r = (W * R).sum(1)
+    if isinstance(cov, BoundedCov):
+        risk = risks_of(W, cov)
+        idx = bounded_steps(W, risk, cov)
+        try:
+            return Trial(r, moments(r), len(idx), moments(bounded_returns(r[idx], risk[idx], cov)))
+        except ValueError:
+            return Trial(r, moments(r), len(idx), None)
     t_eff, active = active_moments(r, risks_of(W, cov))
     return Trial(r, moments(r), t_eff, active)
 
@@ -399,7 +559,7 @@ class Holdout:
         values = {f: deflated_value(m, srs, n) for f, srs in zip(FAMILIES, self._families(me, lambda t: t.m.sr))}
         return Verdict(min(values.values()) >= threshold, values)
 
-    def joint(self, me: int, jb: dict, min_t: int, threshold: float = 0.95) -> Verdict:
+    def joint(self, me: int, jb: dict, min_t: int, threshold: float = 0.95, stat: str = DEFAULT_STAT) -> Verdict:
         t = self.trials[me]
         if t.active is None or t.t_eff < min_t or t.t_eff <= 3:
             return Verdict(False, {}, t_eff=t.t_eff or 0)
@@ -411,6 +571,6 @@ class Holdout:
         ts = [x for i, x in enumerate(ts) if i != me]
         scales = dict(zip(FAMILIES, map(scale, (ts + zt_ts, kept_t + zt_ts, ts, kept_wo_t, kept_t))))
         n_bar = self.N - self.verifications
-        z = psr_z(t.active)
+        z = t.tstat if stat == "t" else psr_z(t.active)
         values = {f: value(jb, z / s, n_bar) for f, s in scales.items()}
         return Verdict(min(values.values()) >= threshold, values, z, bar(jb, n_bar), scales, t.t_eff)

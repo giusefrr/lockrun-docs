@@ -1,4 +1,5 @@
-"""Inside the implementation: every round-3 variant and the honest controls under c(n), 2000 seeds."""
+"""Inside the implementation: every round-3 variant and the honest controls under c(n), 2000 seeds, under the
+default rule (tests/risk_world.py: version 2, the plain t, since 2026-10-30)."""
 import os as _os, sys as _sys
 _HERE = _os.path.dirname(_os.path.abspath(__file__))
 _sys.path[:0] = [_HERE, _os.path.join(_HERE, "..", "..", "tests")]

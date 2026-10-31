@@ -24,16 +24,16 @@ FINDING_GRID = [(c, k0) for c in (1.5, 2.0, 2.5, 3.0, 4.0, 6.0) for k0 in (2, 3,
 EVASION_GRID = [(2.0, 2), (2.5, 3), (2.0, 20), (3.0, 2)]
 
 
-def joint_bar() -> dict:
+def joint_bar(stat: str = jr.DEFAULT_STAT) -> dict:
     """The bar of the implementation checks: normal tail, the df fit of this market."""
-    return jr.calibrate(T, MIN_T, float(jr.NORMAL_DF), THRESHOLD, PATHS, SEED)
+    return jr.calibrate(T, MIN_T, float(jr.NORMAL_DF), THRESHOLD, PATHS, SEED, stat)
 
 
-def t4_joint_bar() -> dict:
+def t4_joint_bar(stat: str = jr.DEFAULT_STAT) -> dict:
     """The bar at the fitted df of the Student-t(4) market."""
     R = market(0, tail=4)
     used, _ = jr.fit_df(jr.residuals({a: R[:, a] for a in range(R.shape[1])}))
-    return jr.calibrate(T, MIN_T, float(used), THRESHOLD, PATHS, SEED)
+    return jr.calibrate(T, MIN_T, float(used), THRESHOLD, PATHS, SEED, stat)
 
 
 # ---------------------------------------------------------------- the first table's world
@@ -109,10 +109,26 @@ def base_weights(seed: int, i: int, A: int) -> np.ndarray:
 def normalized_t(W: np.ndarray, R: np.ndarray, cov: tuple) -> tuple[np.ndarray, np.ndarray]:
     """(the running t-statistic of the strategy's normalized returns, the periods it is at)."""
     risk = jr.risks_of(W, cov)
+    if isinstance(cov, jr.BoundedCov):
+        return bounded_running_t((W * R).sum(1), W, risk, cov)
     idx = jr.active_steps(risk)
     if not idx.size:
         return np.array([]), idx
     return running_t((W * R).sum(1)[idx] / risk[idx]), idx
+
+
+def bounded_running_t(r: np.ndarray, W: np.ndarray, risk: np.ndarray, cov) -> tuple[np.ndarray, np.ndarray]:
+    """The running t under a bound: each value the statistic of that prefix alone, its own floor."""
+    idx = jr.bounded_steps(W, risk, cov)
+    if not cov.risk_floor:
+        return running_t(jr.bounded_returns(r[idx], risk[idx], cov)), idx
+    t = np.full(len(idx), np.nan)
+    for j in range(1, len(idx)):
+        x = jr.bounded_returns(r[idx[:j + 1]], risk[idx[:j + 1]], cov)
+        sd = x.std(ddof=1)
+        if sd > 0:
+            t[j] = x.mean() / (sd / np.sqrt(j + 1))
+    return t, idx
 
 
 def first_ahead(W: np.ndarray, R: np.ndarray, cov: tuple, c: float, k0: int) -> int | None:
@@ -169,7 +185,7 @@ def nullspace_weights(seed: int, i: int, R: np.ndarray, c: float, k0: int, nulls
     """In a universe larger than the window, the window's covariance is singular. After a losing active
     period the strategy holds a portfolio in its null space for one period (estimated risk zero: a pause the
     rule does not count); otherwise random weights; flat once ahead (running t of its active returns at
-    least c, from k0). nulls: the null space per step, kept across the seed's trials (the market's alone)."""
+    least c, from k0). nulls: the row space per step, kept across the seed's trials (the market's alone)."""
     rng = np.random.default_rng([seed, i, 11])
     A = R.shape[1]
     W = np.zeros((T, A))
@@ -185,12 +201,14 @@ def nullspace_weights(seed: int, i: int, R: np.ndarray, c: float, k0: int, nulls
         if len(rows) >= p["warmup"] and active and active[-1] < 0 and not paused:
             if t not in nulls:
                 X = rows - rows.mean(0)
-                nulls[t] = np.linalg.svd(X)[2][np.linalg.matrix_rank(X):]
-            null = nulls[t]
-            w = null.T @ rng.normal(size=len(null))
-            W[t] = w / np.abs(w).sum()
-            paused = True
-            continue                                       # inactive: not in the running t
+                nulls[t] = np.linalg.svd(X)[2][:np.linalg.matrix_rank(X)]
+            row_space = nulls[t]
+            if len(row_space) < A:                         # a window longer than the universe has none
+                z = rng.normal(size=A)                     # projected: no library's choice of basis enters
+                w = z - row_space.T @ (row_space @ z)
+                W[t] = w / np.abs(w).sum()
+                paused = True
+                continue                                   # inactive: not in the running t
         w = rng.normal(size=A)
         W[t] = w / np.abs(w).sum()
         paused = False
@@ -301,6 +319,11 @@ def true_covariances(key: str, R: np.ndarray, sigma) -> np.ndarray:
     vol = market_vols(A)
     if key == "equal":
         return np.broadcast_to(np.eye(A) * 1e-4, (T, A, A)).copy()
+    if key == "twin":
+        S = np.broadcast_to(np.eye(A) * 1e-4, (T, A, A)).copy()
+        S[:, -1, -2] = S[:, -2, -1] = 1e-4
+        S[:, -1, -1] = 1e-4 + 1e-8
+        return S
     if key == "factor":
         S = np.empty((T, A, A))
         S[:] = np.diag(vol ** 2 * (1 - FACTOR_SHARE))
@@ -313,12 +336,19 @@ def true_covariances(key: str, R: np.ndarray, sigma) -> np.ndarray:
     return S
 
 
+def sign_reference(A: int) -> np.ndarray:
+    """A fixed generic vector: an eigenvector's sign is the one with a positive dot product with it."""
+    return np.random.default_rng([SEED, A]).normal(size=A)
+
+
 def _smallest(values: np.ndarray, vectors: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """Per step, the smallest eigenvalue that is not the null space's, and its eigenvector."""
+    """Per step, the smallest eigenvalue that is not the null space's, and its eigenvector, of the sign
+    sign_reference fixes: a library's choice of sign would otherwise change the strategy."""
     live = values > 1e-8 * values[:, -1:]
     at = live.argmax(1)
     steps = np.arange(len(values))
-    return values[steps, at], vectors[steps, :, at]
+    v = vectors[steps, :, at]
+    return values[steps, at], v * np.where(v @ sign_reference(v.shape[1]) < 0, -1.0, 1.0)[:, None]
 
 
 def smallest_eigen_direction(cov: tuple) -> np.ndarray:
@@ -336,6 +366,13 @@ def most_underestimated_direction(cov: tuple, Sigma: np.ndarray) -> tuple[np.nda
     values, v = _smallest(*np.linalg.eigh(Li @ S @ Li.transpose(0, 2, 1)))
     d = np.einsum("tji,tj->ti", Li, v)
     return d / np.abs(d).sum(1, keepdims=True), 1 / np.sqrt(values)
+
+
+def twin_equal_market(seed: int, A: int = 50) -> np.ndarray:
+    """A assets of one volatility, the last two twins: a large off-diagonal that pulls shrinkage down."""
+    R = equal_market(seed, A)
+    R[:, -1] = R[:, -2] + np.random.default_rng([seed, 5]).normal(0, 1e-4, T)
+    return R
 
 
 TARGET_RISK = 1e-5      # small enough that gross stays within 1; a normalized return ignores it
@@ -366,28 +403,42 @@ def timed_weights(direction: np.ndarray, ratio: np.ndarray, factor: float, seed:
     return W
 
 
+def constant_risk(W: np.ndarray, cov: tuple) -> np.ndarray:
+    """The same directions scaled, each estimated step, to one estimated risk: what a risk-targeting strategy
+    does. A normalized return does not move, and no step sits under a share of the median."""
+    S, ok = cov
+    W = W.copy()
+    est = np.sqrt(np.einsum("ti,tij,tj->t", W[ok], S, W[ok]))
+    W[ok] = W[ok] * (TARGET_RISK / est)[:, None]
+    return W
+
+
 def pause_budget(cov: tuple) -> int:
     """How many steps may pause so that T_eff stays above min_t: T - min_t - 1, the warm-up's among them."""
     return T - MIN_T - 1 - int((~cov[1]).sum())
 
 
 def pausing_weights(rule: str, seed: int, i: int, R: np.ndarray, cov: tuple, Sigma: np.ndarray | None, c: float | None,
-                    k0: int | None, base=None) -> np.ndarray:
+                    k0: int | None, base=None, tiny: float | None = None) -> np.ndarray:
     """Base weights, with zero weights on the steps a rule picks, within pause_budget, flat once ahead; it
     stops only with more than min_t active steps, so that a run is not refused for too few.
     losing  the step after a losing active step (not two in a row)
     behind  while its running t-statistic is below 0
-    timed   where the window overestimates this step's true risk"""
+    timed   where the window overestimates this step's true risk
+    tiny: pauses at the weights times tiny instead of zero, the aim at a risk floor: raised, not excluded, they
+    count as active with a return near zero. Fewer than the live steps, or the median, so the floor, falls to
+    them; it stops with more than min_t active steps counting them, and more live steps than pauses."""
     W = base_weights(seed, i, R.shape[1]) if base is None else base.copy()
     risk = jr.risks_of(W, cov)
-    budget = pause_budget(cov)
+    budget = pause_budget(cov) if tiny is None else (int(np.isfinite(risk).sum()) - 1) // 2
     true = None if Sigma is None else np.sqrt(np.einsum("ti,tij,tj->t", W, Sigma, W))
-    n, s, q, last, paused = 0, 0.0, 0.0, None, False
+    n, s, q, last, paused, frozen = 0, 0.0, 0.0, None, False, 0
     for t in range(T):
         if not np.isfinite(risk[t]) or risk[t] <= 0:
             continue
         ahead = n >= 2 and q - s * s / n > 0 and (s / n) / np.sqrt((q - s * s / n) / (n - 1) / n)
-        if c is not None and n > MIN_T and t + 1 >= k0 and ahead is not False and ahead >= c:
+        enough = n > MIN_T if tiny is None else n - frozen > frozen and n > MIN_T
+        if c is not None and enough and t + 1 >= k0 and ahead is not False and ahead >= c:
             W[t:] = 0.0
             break
         if rule == "losing":
@@ -397,9 +448,13 @@ def pausing_weights(rule: str, seed: int, i: int, R: np.ndarray, cov: tuple, Sig
         else:
             pause = true[t] < risk[t]
         if pause and budget > 0:
-            W[t] = 0.0
             budget -= 1
             paused = True
+            if tiny is None:
+                W[t] = 0.0
+            else:
+                W[t] *= tiny
+                n, frozen = n + 1, frozen + 1          # active, its return near zero
             continue
         paused = False
         x = float(W[t] @ R[t]) / risk[t]
@@ -417,7 +472,7 @@ class SeedWorld:
                  cov: tuple | None = None, min_active: int = 0, **market_kw):
         self.seed, self.A, self.p, self.min_active = seed, A, p, min_active
         self.R = market(seed, A, **market_kw) if R is None else R
-        self.cov = jr.window_covariances(self.R, p) if cov is None else cov
+        self.cov = jr.estimator(self.R, p) if cov is None else cov
         self._make = base or base_weights
         self._base, self._trials, self._nulls = {}, {}, {}
 

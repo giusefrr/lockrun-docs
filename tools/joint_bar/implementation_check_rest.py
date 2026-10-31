@@ -1,7 +1,8 @@
 """Inside the implementation (tests/risk_world.py: the real exposure, calibration and promote code),
 under c(n), 2000 seeds per cell: the two adversaries on the risk estimate (null space, a volatility
 regime the window lags), every trial stopping once ahead (n = 1, 2, 5, 10, 50; normal and Student-t(4)
-markets, the bar at each one's fitted df), and the honest power table. Run from anywhere:
+markets, the bar at each one's fitted df), and the honest power table, under the default rule (version 2,
+the plain t, since 2026-10-30). Run from anywhere:
     uv run python tools/joint_bar/implementation_check_rest.py"""
 import os as _os, sys as _sys
 _HERE = _os.path.dirname(_os.path.abspath(__file__))

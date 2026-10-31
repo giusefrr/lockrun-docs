@@ -8,8 +8,9 @@ requests (plan item 1, THREAT_MODEL.md §2 and §3) ran live on a deployment bui
 night; the data host (claim 10: the service never holds the holdout) the day before, and runner
 signatures (claim 9) the night before that (all below); the rest is as of 18 October. The
 adversarial tests of plan items 2 and 3, their fixes, and the statistical rule that plan item 3 led
-to, the joint bar (section 2 and THREAT_MODEL.md §5a, 27 October), have run only in the suite: the
-live deployment runs code from before them.
+to, the joint bar (section 2 and THREAT_MODEL.md §5a, 27 October), and its version 2 (the plain
+t-statistic for every new holdout, 30 October), have run only in the suite and the standalone
+simulations: the live deployment runs code from before them.
 
 ## 1. Verified on a live deployment
 
@@ -533,7 +534,7 @@ under the rule in force since that day (the joint bar); for case 4, before it to
 | 1 | Pure luck: N null strategies, the best promoted | N = 1: 0.0077; 2: 0.0045; 10: 0.0010; 100: 0.0025; 1000: 0 | `test_adversary_luck.py` |
 | 2 | Seed mining: one strategy sealed with 100 and 2000 seeds | 0 and 0 | `test_adversary_seed_mining.py` |
 | 3 | Crashing on purpose when the partial Sharpe looks bad (k < T/2 and k ≥ T/2, with and without partial returns) | 3 in 7400 over every variant; worst 0.004 | `test_adversary_early_failures.py` |
-| 4 | Going flat, or cutting risk, once ahead (and its adaptations) | before the rule: up to 0.27 (n = 1); now at most 0.021 | `test_adversary_zero_tail.py`, `test_adversary_risk_cuts.py`, `test_adversary_risk_estimate.py` |
+| 4 | Going flat, or cutting risk, once ahead (and its adaptations) | before the rule: up to 0.27 (n = 1); version 1 (the PSR statistic) at most 0.021; version 2 (the plain t) at most 0.0205 | `test_adversary_zero_tail.py`, `test_adversary_risk_cuts.py`, `test_adversary_risk_estimate.py` |
 | 5 | Duplicate laundering: scaled and one-period-flipped copies | 0 in 5200 | `test_adversary_duplicates.py` |
 | 6 | Alternating early and late failures between the families | 4 in 7250; worst 0.0017 | `test_adversary_families.py` |
 | 7 | Wide junk to inflate V, tight junk to shrink it | 0 in 2600 | `test_adversary_variance.py` |
@@ -547,6 +548,24 @@ their active periods against a bar calibrated for a researcher free to stop (THR
 every cell, its power cost and what it does not measure; the simulations in `tools/joint_bar/`). Case
 8's rule was kept and is asserted: both series of a disagreeing opening enter every V, and the opening
 counts twice in N.
+
+**Rule version 2 (30 October 2026).** An adversary that knows the risk estimator, on a universe near
+the window's size (58 equal assets, a 60-row window), passed version 1 at up to 0.0858 on 8000 fresh
+seeds: one constructed outlier shrank the PSR's denominator. Under the plain t its worst cell is 0.0498
+on 8000 fresh seeds, no cell above nominal of the 288 (5 were on the first 2000 seeds, at the worst stop,
+at most 0.0550); shrinkage, a longer window, an eigenvalue floor,
+a risk floor and winsorizing were measured and dropped (THREAT_MODEL.md §5a, with the numbers and the
+reasons; `tools/joint_bar/standalone/run.py fixes`, `targeted`, `confirm`). Every new holdout is under
+version 2; a holdout initialised before keeps version 1, and its verdicts stay valid. What the suite
+shows: the rule recorded in the init record, the data host's install and every promote record
+(`test_rule_versions.py`); a data host refusing an install under a rule it does not compute; the
+service promoting under the plain t and an old holdout under the PSR, each with verify and
+sign-verdicts passing, and an old promote record without the rule field still valid; the replay
+failing a data host that normalizes under another estimator, floor or winsorization
+(`test_rule_c_variants.py`); and the package's decisions identical to the standalone copy's under both
+statistics and every candidate (`test_joint_bar_standalone.py`, `test_rule_variants_parity.py`). The
+§5a table was measured again under version 2 through the implemented code: every cell at or below
+0.0385.
 
 *Found and fixed on the way, each a test and a commit:*
 1. Risk's replay recomputed the data host's series hashes and detector flags but not its signed

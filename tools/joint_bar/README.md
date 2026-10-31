@@ -33,9 +33,12 @@ repeats these strategies with 2000 seeds and the stopping grid of the later roun
    step (at least 20; no shrinkage). A step with no weights, no estimate, zero risk or a risk under 10%
    of the strategy's median active risk is inactive. Going flat, or cutting the size to almost zero,
    no longer stretches the series.
-2. **T_eff.** The statistic is the PSR statistic against 0 on the active steps' normalized returns,
-   z = sr sqrt(T_eff - 1) / sqrt(1 - skew sr + (kurt - 1)/4 sr^2); T_eff, the number of active steps,
-   is what the minimum track record min_t applies to.
+2. **T_eff.** The statistic z on the active steps' normalized returns is, under rule version 2 (every
+   holdout initialised since 30 October 2026), the plain t-statistic z = sr sqrt(T_eff); under version 1
+   (a holdout initialised before), the PSR statistic against 0, z = sr sqrt(T_eff - 1) / sqrt(1 - skew
+   sr + (kurt - 1)/4 sr^2). T_eff, the number of active steps, is what the minimum track record min_t
+   applies to. Version 2 is the candidate A of `standalone/` (the PSR's denominator under one constructed
+   outlier, below); THREAT_MODEL.md §5a has the candidates measured and dropped, with the reasons.
 3. **The joint bar c(N).** F is the null CDF of sup over k in [min_t, T] of z_k for one trial (the
    researcher may stop at any k), simulated with iid Student-t returns at the holdout's fitted df
    (floor 4). For n trials each free to stop, c(n) = F^-1(threshold^(1/n)), and a candidate passes iff
@@ -43,7 +46,12 @@ repeats these strategies with 2000 seeds and the stopping grid of the later roun
    trial families keeps its trials, with z scaled by s = max(1, the sd of its other trials'
    t-statistics).
 
-On the holdout the implementation checks use (T = 250, min_t = 100, threshold 0.95, normal tail):
+On the holdout the implementation checks use (T = 250, min_t = 100, threshold 0.95, normal tail), under
+version 2 (the plain t):
+
+    c(1) 2.277  c(2) 2.585  c(5) 2.949  c(10) 3.193  c(50) 3.713  c(100) 3.927  c(1000) 4.530
+
+and under version 1 (the PSR statistic):
 
     c(1) 2.252  c(2) 2.552  c(5) 2.906  c(10) 3.146  c(50) 3.662  c(100) 3.854  c(1000) 4.418
 
@@ -52,7 +60,8 @@ Command: `uv run python tools/joint_bar/bar_table.py`.
 ## The numbers: every adversarial variant, nominal 0.05
 
 PASS rate under the null, 2000 seeds per cell. "Before" is the DSR with N correct; "joint bar" is
-the rule as implemented (`lockrun/exposure.py`, `lockrun/calibration.py`, `evaluate_promotion`, run
+version 1 of the rule as implemented (THREAT_MODEL.md §5a has version 2's column, the same scripts on
+today's default) (`lockrun/exposure.py`, `lockrun/calibration.py`, `evaluate_promotion`, run
 through `tests/risk_world.py`). Each adversary cell is the worst over its stopping rule (c from 1.5
 to 3.5, first stop at period 2, 3, 20 or 100).
 
@@ -72,10 +81,10 @@ to 3.5, first stop at period 2, 3, 20 or 100).
 | Hedge of two twin assets | 0.129 / 0.044 | 0.0205 / 0.0150 |
 | Hedge with a drifting ratio | 0.0835 / 0.0285 | 0.0165 / 0.0130 |
 | Only the lowest-variance asset | 0.035 / 0.0075 | 0.0150 / 0.0105 |
-| Pausing in the window covariance's null space (100 assets) | not run | 0.0125 / 0.0075 |
+| Pausing in the window covariance's null space (100 assets) | not run | 0.0135 / 0.0115 |
 | An asset whose volatility the window lags (falls tenfold) | not run | 0.0200 / 0.0175 |
 | Every trial stopping at c(n), n = 1 to 50, normal market | not run | at most 0.0205 over every stopping rule tried (0.0200 at the c(n) stop) |
-| Every trial stopping at c(n), n = 1 to 50, Student-t(4) market | not run | at most 0.0280 |
+| Every trial stopping at c(n), n = 1 to 50, Student-t(4) market | not run | 0.0280 on this row. Worst cell of the whole table: 0.0498 on fresh seeds under the plain-t rule; the PSR rule reached 0.0858 against an estimator-aware adversary (below, and [standalone/README.md](standalone/README.md)). |
 
 | Column | Command |
 |--|--|
@@ -92,11 +101,11 @@ sequential critical value with the DSR's sr0 was valid but 0.2 to 0.9 t-units to
 
 ## The assumptions: dependence and adaptive exposure rules
 
-**Above nominal, nominal 0.05: an adversary that sets the whole gross in the direction the window most underestimates, with every step kept active, passes at up to 0.0830 (n = 2, 2000 seeds), 0.0848 on 8000 fresh seeds at the stop the first 2000 chose, and 0.0925 at a window of 120 or 250.** Dependence (at most 0.0345), GARCH markets replaying every row of the main table (at most 0.0210) and pauses within the budget (at most 0.0310) stay below nominal.
+**Above nominal under rule version 1 (the PSR statistic), nominal 0.05: an adversary that sets the whole gross in the direction the window most underestimates, with every step kept active, passes at up to 0.0900 (n = 2, 2000 seeds), 0.0858 on 8000 fresh seeds at the stop the first 2000 chose (22 of 70 of these cells above nominal there), and 0.0905 at a window of 120 or 250.** Dependence (at most 0.0345), GARCH markets replaying every row of the main table (at most 0.0210) and pauses within the budget (at most 0.0310) stay below nominal.
 
-Why: the excess comes from the PSR statistic's denominator, not from the bar or the risk estimate's mean. With a universe close to the window, the smallest eigenvalue is close to zero on some steps, so one step's normalized return can be 40 times the median. A positive one gives the series large skew, and sqrt(1 - skew sr + (kurt - 1)/4 sr^2) falls well below 1: runs that pass have a median t-statistic of 1.79 to 1.96, under the bar of about 2.25, and a median denominator term of 0.37 to 0.48 (0.87 to 0.95 over all runs). With no stop, on 1500 seeds, z passes at 0.037 (58 assets) and 0.047 (30 assets) while the t-statistic against the same bar passes at 0.011 and 0.005. A scale alone changes no normalized return, so the (2) rows exceed the (1) rows only because scaling keeps those steps above the 10% floor.
+Why: the excess comes from the PSR statistic's denominator, not from the bar or the risk estimate's mean. With a universe close to the window, the smallest eigenvalue is close to zero on some steps, so one step's normalized return is about 25 to 36 times the median, the largest of a run at the median run (factor 1.5 and 3.0). A positive one gives the series large skew, and sqrt(1 - skew sr + (kurt - 1)/4 sr^2) falls well below 1: on attack (2) with no stop, runs that pass have a median t-statistic of 1.60 to 2.07, under the bar of about 2.25, and a median of that term of 0.58 to 0.78 (0.93 to 0.97 over all runs). With no stop at factor 1.5, on 1500 seeds and a 100k-path bar, z passes at 0.034 (58 assets) and 0.041 (30 assets) while the t-statistic against the same bar passes at 0.011 and 0.004. A scale alone changes no normalized return, so the (2) rows exceed the (1) rows only because scaling keeps those steps above the 10% floor.
 
-Command: `python standalone/run.py assumptions`, with `--parts a,b,c,d`, `--rows`, `--window`, `--warmup` and `--first-seed`; no lockrun needed. Each holdout gets the product's own procedure: its df fitted on its residuals, its bar from 2M paths, seed 20261027 (174 distinct dfs in the table, each exactly the calibration that holdout would get). 2000 seeds, 0 to 1999, unless stated. A cell is the worst over its stops, so a cell near 0.05 carries that selection; the fresh seeds below do not. T_eff is the first trial's median at that stop; "refused" is the share of runs under min_t. Rows above nominal say so.
+Command: `python standalone/run.py assumptions --stat psr`, with `--parts a,b,c,d`, `--rows`, `--window`, `--warmup` and `--first-seed`; no lockrun needed. Each holdout gets the product's own procedure: its df fitted on its residuals, its bar from 2M paths, seed 20261027 (174 distinct dfs in the table, each exactly the calibration that holdout would get). 2000 seeds, 0 to 1999, unless stated. A cell is the worst over its stops, so a cell near 0.05 carries that selection; the fresh seeds below do not. T_eff is the first trial's median at that stop; "refused" is the share of runs under min_t. Rows above nominal say so.
 
 ### Confirmed on fresh seeds
 
@@ -104,28 +113,43 @@ Seeds 2000 to 9999, 8000 of them, each row at the stop the first 2000 seeds chos
 
 | Fresh seeds, at the stop the first 2000 chose: | n = 1 / 2 | |
 |--|--|--|
-| Fresh: (1) Window's smallest eigenvalue, iid, 30 equal assets | 0.0382 / 0.0401 |  |
-| Fresh: (1) Direction most underestimated, iid, 30 equal assets | 0.0382 / 0.0401 |  |
-| Fresh: (1) Window's smallest eigenvalue, iid, 50 equal assets | 0.0425 / 0.0444 |  |
-| Fresh: (1) Direction most underestimated, iid, 50 equal assets | 0.0424 / 0.0444 |  |
-| Fresh: (1) Window's smallest eigenvalue, iid, 58 equal assets | 0.0503 / 0.0546 | above nominal |
-| Fresh: (1) Direction most underestimated, iid, 58 equal assets | 0.0503 / 0.0545 | above nominal |
-| Fresh: (2) Trades above 1.5x, floor otherwise, iid, 30 equal assets | 0.0619 / 0.0756 | above nominal |
-| Fresh: (2) Trades above 2.0x, floor otherwise, iid, 30 equal assets | 0.0619 / 0.0756 | above nominal |
-| Fresh: (2) Trades above 3.0x, floor otherwise, iid, 30 equal assets | 0.0636 / 0.0809 | above nominal |
-| Fresh: (2) Trades above 1.5x, floor otherwise, iid, 50 equal assets | 0.0505 / 0.0601 | above nominal |
-| Fresh: (2) Trades above 2.0x, floor otherwise, iid, 50 equal assets | 0.0504 / 0.0676 | above nominal |
-| Fresh: (2) Trades above 3.0x, floor otherwise, iid, 50 equal assets | 0.0467 / 0.0686 | above nominal |
-| Fresh: (2) Trades above 1.5x, floor otherwise, iid, 58 equal assets | 0.0704 / 0.0841 | above nominal |
-| Fresh: (2) Trades above 2.0x, floor otherwise, iid, 58 equal assets | 0.0703 / 0.0843 | above nominal |
-| Fresh: (2) Trades above 3.0x, floor otherwise, iid, 58 equal assets | 0.0706 / 0.0848 | above nominal |
-| Fresh: (1) Window's smallest eigenvalue, GARCH, 50 assets | 0.0399 / 0.0510 | above nominal |
-| Fresh: (1) Direction most underestimated, GARCH, 50 assets | 0.0299 / 0.0296 |  |
-| Fresh: (3) Trades above 1.5x, floor otherwise, GARCH, 50 assets | 0.0426 / 0.0503 | above nominal |
-| Fresh: (3) Trades above 2.0x, floor otherwise, GARCH, 50 assets | 0.0434 / 0.0499 |  |
-| Fresh: (3) Trades above 3.0x, floor otherwise, GARCH, 50 assets | 0.0436 / 0.0499 |  |
+| Fresh: (1) Window's smallest eigenvalue, iid | 0.0278 / 0.0301 |  |
+| Fresh: (1) Direction most underestimated, iid | 0.0315 / 0.0318 |  |
+| Fresh: (1) Window's smallest eigenvalue, iid, 30 equal assets | 0.0318 / 0.0351 |  |
+| Fresh: (1) Direction most underestimated, iid, 30 equal assets | 0.0318 / 0.0351 |  |
+| Fresh: (1) Window's smallest eigenvalue, iid, 50 equal assets | 0.0432 / 0.0428 |  |
+| Fresh: (1) Direction most underestimated, iid, 50 equal assets | 0.0432 / 0.0428 |  |
+| Fresh: (1) Window's smallest eigenvalue, iid, 58 equal assets | 0.0530 / 0.0550 | above nominal |
+| Fresh: (1) Direction most underestimated, iid, 58 equal assets | 0.0530 / 0.0550 | above nominal |
+| Fresh: (1) Window's smallest eigenvalue, GARCH | 0.0251 / 0.0220 |  |
+| Fresh: (1) Direction most underestimated, GARCH | 0.0297 / 0.0255 |  |
+| Fresh: (1) Window's smallest eigenvalue, GARCH, 50 assets | 0.0391 / 0.0479 |  |
+| Fresh: (1) Direction most underestimated, GARCH, 50 assets | 0.0285 / 0.0271 |  |
+| Fresh: (1) Window's smallest eigenvalue, one-factor GARCH | 0.0276 / 0.0240 |  |
+| Fresh: (1) Direction most underestimated, one-factor GARCH | 0.0348 / 0.0299 |  |
+| Fresh: (2) Trades above 1.5x, floor otherwise, iid | 0.0326 / 0.0343 |  |
+| Fresh: (2) Trades above 2.0x, floor otherwise, iid | 0.0370 / 0.0357 |  |
+| Fresh: (2) Trades above 3.0x, floor otherwise, iid | 0.0359 / 0.0357 |  |
+| Fresh: (2) Trades above 1.5x, floor otherwise, iid, 30 equal assets | 0.0620 / 0.0770 | above nominal |
+| Fresh: (2) Trades above 2.0x, floor otherwise, iid, 30 equal assets | 0.0620 / 0.0770 | above nominal |
+| Fresh: (2) Trades above 3.0x, floor otherwise, iid, 30 equal assets | 0.0634 / 0.0784 | above nominal |
+| Fresh: (2) Trades above 1.5x, floor otherwise, iid, 50 equal assets | 0.0531 / 0.0681 | above nominal |
+| Fresh: (2) Trades above 2.0x, floor otherwise, iid, 50 equal assets | 0.0532 / 0.0671 | above nominal |
+| Fresh: (2) Trades above 3.0x, floor otherwise, iid, 50 equal assets | 0.0521 / 0.0669 | above nominal |
+| Fresh: (2) Trades above 1.5x, floor otherwise, iid, 58 equal assets | 0.0754 / 0.0854 | above nominal |
+| Fresh: (2) Trades above 2.0x, floor otherwise, iid, 58 equal assets | 0.0751 / 0.0855 | above nominal |
+| Fresh: (2) Trades above 3.0x, floor otherwise, iid, 58 equal assets | 0.0755 / 0.0858 | above nominal |
+| Fresh: (3) Trades above 1.5x, floor otherwise, GARCH | 0.0281 / 0.0270 |  |
+| Fresh: (3) Trades above 2.0x, floor otherwise, GARCH | 0.0307 / 0.0301 |  |
+| Fresh: (3) Trades above 3.0x, floor otherwise, GARCH | 0.0340 / 0.0304 |  |
+| Fresh: (3) Trades above 1.5x, floor otherwise, GARCH, 50 assets | 0.0386 / 0.0478 |  |
+| Fresh: (3) Trades above 2.0x, floor otherwise, GARCH, 50 assets | 0.0385 / 0.0473 |  |
+| Fresh: (3) Trades above 3.0x, floor otherwise, GARCH, 50 assets | 0.0380 / 0.0475 |  |
+| Fresh: (3) Trades above 1.5x, floor otherwise, one-factor GARCH | 0.0333 / 0.0296 |  |
+| Fresh: (3) Trades above 2.0x, floor otherwise, one-factor GARCH | 0.0324 / 0.0300 |  |
+| Fresh: (3) Trades above 3.0x, floor otherwise, one-factor GARCH | 0.0369 / 0.0336 |  |
 
-At 50 assets on GARCH the cells are at nominal within the noise. On equal assets attack (2) is above it at 30, 50 and 58 assets at n = 2, and attack (1) at 58.
+On equal assets attack (2) is above nominal at 30, 50 and 58 assets, and attack (1) at 58, at n = 1 and n = 2. At 50 assets on GARCH every cell is below nominal, at most 0.0479. Under rule version 2 (the plain t), the default since 30 October 2026, no fresh cell of the 288 is above nominal, the worst 0.0498 ([standalone/README.md](standalone/README.md)).
 
 ### (a) Correlated trials
 
@@ -162,7 +186,7 @@ The main table's stops, on independent GARCH(1,1) assets and on the one-factor m
 | GARCH: Hedge of two twin assets | 0.0135 / 0.0115 | 230 / 230 | 0% / 0% |  |
 | GARCH: Hedge with a drifting ratio | 0.0150 / 0.0105 | 230 / 230 | 0% / 0% |  |
 | GARCH: Only the lowest-variance asset | 0.0145 / 0.0115 | 230 / 230 | 0% / 0% |  |
-| GARCH: Pausing in the window covariance's null space (100 assets) | 0.0075 / 0.0050 | 153 / 153 | 1% / 1% |  |
+| GARCH: Pausing in the window covariance's null space (100 assets) | 0.0115 / 0.0085 | 153 / 154 | 2% / 1% |  |
 | GARCH: An asset whose volatility the window lags (falls tenfold) | 0.0165 / 0.0155 | 230 / 230 | 0% / 0% |  |
 | One-factor GARCH: Honest, constant exposure | 0.0120 / 0.0115 | 230 / 230 | 0% / 0% |  |
 | One-factor GARCH: Honest, 10% random flat days | 0.0130 / 0.0095 | 207 / 207 | 0% / 0% |  |
@@ -178,7 +202,7 @@ The main table's stops, on independent GARCH(1,1) assets and on the one-factor m
 | One-factor GARCH: Hedge of two twin assets | 0.0165 / 0.0160 | 230 / 230 | 0% / 0% |  |
 | One-factor GARCH: Hedge with a drifting ratio | 0.0140 / 0.0140 | 230 / 230 | 0% / 0% |  |
 | One-factor GARCH: Only the lowest-variance asset | 0.0170 / 0.0120 | 230 / 230 | 0% / 0% |  |
-| One-factor GARCH: Pausing in the window covariance's null space (100 assets) | 0.0105 / 0.0085 | 153 / 153 | 2% / 0% |  |
+| One-factor GARCH: Pausing in the window covariance's null space (100 assets) | 0.0135 / 0.0115 | 153 / 153 | 2% / 0% |  |
 | One-factor GARCH: An asset whose volatility the window lags (falls tenfold) | 0.0130 / 0.0120 | 230 / 230 | 0% / 0% |  |
 
 | Every trial stopping, each holdout its own bar | n = 1 | n = 2 | n = 5 | n = 10 | n = 50 |
@@ -192,41 +216,41 @@ Rebalanced every step, a random sign each step, stops from the grid and at c(n) 
 
 | Row | n = 1 / 2 | T_eff median | Refused | |
 |--|--|--|--|--|
-| (1) Window's smallest eigenvalue, iid | 0.0425 / 0.0290 | 230 / 230 | 0% / 0% |  |
-| (1) Direction most underestimated, iid | 0.0300 / 0.0310 | 230 / 230 | 0% / 0% |  |
-| (1) Window's smallest eigenvalue, iid, 30 equal assets | 0.0395 / 0.0405 | 228 / 228 | 0% / 0% |  |
-| (1) Direction most underestimated, iid, 30 equal assets | 0.0395 / 0.0405 | 228 / 228 | 0% / 0% |  |
-| (1) Window's smallest eigenvalue, iid, 50 equal assets | 0.0410 / 0.0475 | 230 / 230 | 0% / 0% |  |
-| (1) Direction most underestimated, iid, 50 equal assets | 0.0410 / 0.0475 | 230 / 230 | 0% / 0% |  |
-| (1) Window's smallest eigenvalue, iid, 58 equal assets | 0.0500 / 0.0535 | 228 / 228 | 0% / 0% | above nominal |
-| (1) Direction most underestimated, iid, 58 equal assets | 0.0500 / 0.0535 | 228 / 228 | 0% / 0% | above nominal |
-| (1) Window's smallest eigenvalue, GARCH | 0.0280 / 0.0200 | 230 / 230 | 0% / 0% |  |
-| (1) Direction most underestimated, GARCH | 0.0295 / 0.0295 | 230 / 230 | 0% / 0% |  |
-| (1) Window's smallest eigenvalue, GARCH, 50 assets | 0.0425 / 0.0505 | 230 / 230 | 0% / 0% | above nominal |
-| (1) Direction most underestimated, GARCH, 50 assets | 0.0365 / 0.0295 | 229 / 229 | 0% / 0% |  |
-| (1) Window's smallest eigenvalue, one-factor GARCH | 0.0325 / 0.0275 | 230 / 230 | 0% / 0% |  |
-| (1) Direction most underestimated, one-factor GARCH | 0.0330 / 0.0320 | 230 / 230 | 0% / 0% |  |
-| (2) Trades above 1.5x, floor otherwise, iid | 0.0200 / 0.0205 | 230 / 230 | 0% / 0% | ; traded 39% of steps |
-| (2) Trades above 2.0x, floor otherwise, iid | 0.0335 / 0.0320 | 230 / 230 | 0% / 0% | ; traded 3% of steps |
-| (2) Trades above 3.0x, floor otherwise, iid | 0.0380 / 0.0310 | 230 / 230 | 0% / 0% | ; traded 0% of steps |
-| (2) Trades above 1.5x, floor otherwise, iid, 30 equal assets | 0.0605 / 0.0830 | 230 / 230 | 0% / 0% | above nominal; traded 100% of steps |
-| (2) Trades above 2.0x, floor otherwise, iid, 30 equal assets | 0.0605 / 0.0830 | 230 / 230 | 0% / 0% | above nominal; traded 100% of steps |
-| (2) Trades above 3.0x, floor otherwise, iid, 30 equal assets | 0.0620 / 0.0820 | 230 / 230 | 0% / 0% | above nominal; traded 71% of steps |
-| (2) Trades above 1.5x, floor otherwise, iid, 50 equal assets | 0.0525 / 0.0590 | 230 / 230 | 0% / 0% | above nominal; traded 99% of steps |
-| (2) Trades above 2.0x, floor otherwise, iid, 50 equal assets | 0.0505 / 0.0575 | 230 / 230 | 0% / 0% | above nominal; traded 98% of steps |
-| (2) Trades above 3.0x, floor otherwise, iid, 50 equal assets | 0.0525 / 0.0590 | 230 / 230 | 0% / 0% | above nominal; traded 95% of steps |
-| (2) Trades above 1.5x, floor otherwise, iid, 58 equal assets | 0.0660 / 0.0810 | 230 / 230 | 0% / 0% | above nominal; traded 98% of steps |
-| (2) Trades above 2.0x, floor otherwise, iid, 58 equal assets | 0.0665 / 0.0800 | 230 / 230 | 0% / 0% | above nominal; traded 96% of steps |
-| (2) Trades above 3.0x, floor otherwise, iid, 58 equal assets | 0.0665 / 0.0795 | 230 / 230 | 0% / 0% | above nominal; traded 93% of steps |
-| (3) Trades above 1.5x, floor otherwise, GARCH | 0.0270 / 0.0285 | 230 / 230 | 0% / 0% | ; traded 82% of steps |
-| (3) Trades above 2.0x, floor otherwise, GARCH | 0.0375 / 0.0285 | 230 / 230 | 0% / 0% | ; traded 10% of steps |
-| (3) Trades above 3.0x, floor otherwise, GARCH | 0.0385 / 0.0295 | 230 / 230 | 0% / 0% | ; traded 0% of steps |
-| (3) Trades above 1.5x, floor otherwise, GARCH, 50 assets | 0.0470 / 0.0495 | 230 / 230 | 0% / 0% | ; traded 100% of steps |
-| (3) Trades above 2.0x, floor otherwise, GARCH, 50 assets | 0.0480 / 0.0495 | 230 / 230 | 0% / 0% | ; traded 98% of steps |
-| (3) Trades above 3.0x, floor otherwise, GARCH, 50 assets | 0.0480 / 0.0515 | 230 / 230 | 0% / 0% | above nominal; traded 95% of steps |
-| (3) Trades above 1.5x, floor otherwise, one-factor GARCH | 0.0310 / 0.0295 | 230 / 230 | 0% / 0% | ; traded 64% of steps |
-| (3) Trades above 2.0x, floor otherwise, one-factor GARCH | 0.0405 / 0.0340 | 230 / 230 | 0% / 0% | ; traded 5% of steps |
-| (3) Trades above 3.0x, floor otherwise, one-factor GARCH | 0.0320 / 0.0255 | 230 / 230 | 0% / 0% | ; traded 0% of steps |
+| (1) Window's smallest eigenvalue, iid | 0.0370 / 0.0285 | 230 / 230 | 0% / 0% |  |
+| (1) Direction most underestimated, iid | 0.0355 / 0.0310 | 230 / 230 | 0% / 0% |  |
+| (1) Window's smallest eigenvalue, iid, 30 equal assets | 0.0335 / 0.0380 | 228 / 228 | 0% / 0% |  |
+| (1) Direction most underestimated, iid, 30 equal assets | 0.0335 / 0.0380 | 228 / 228 | 0% / 0% |  |
+| (1) Window's smallest eigenvalue, iid, 50 equal assets | 0.0465 / 0.0430 | 230 / 230 | 0% / 0% |  |
+| (1) Direction most underestimated, iid, 50 equal assets | 0.0465 / 0.0430 | 230 / 230 | 0% / 0% |  |
+| (1) Window's smallest eigenvalue, iid, 58 equal assets | 0.0580 / 0.0580 | 228 / 228 | 0% / 0% | above nominal |
+| (1) Direction most underestimated, iid, 58 equal assets | 0.0580 / 0.0580 | 228 / 228 | 0% / 0% | above nominal |
+| (1) Window's smallest eigenvalue, GARCH | 0.0260 / 0.0220 | 230 / 230 | 0% / 0% |  |
+| (1) Direction most underestimated, GARCH | 0.0345 / 0.0340 | 230 / 230 | 0% / 0% |  |
+| (1) Window's smallest eigenvalue, GARCH, 50 assets | 0.0405 / 0.0445 | 230 / 230 | 0% / 0% |  |
+| (1) Direction most underestimated, GARCH, 50 assets | 0.0305 / 0.0375 | 229 / 229 | 0% / 0% |  |
+| (1) Window's smallest eigenvalue, one-factor GARCH | 0.0315 / 0.0285 | 230 / 230 | 0% / 0% |  |
+| (1) Direction most underestimated, one-factor GARCH | 0.0350 / 0.0325 | 230 / 230 | 0% / 0% |  |
+| (2) Trades above 1.5x, floor otherwise, iid | 0.0340 / 0.0375 | 230 / 230 | 0% / 0% | traded 39% of steps |
+| (2) Trades above 2.0x, floor otherwise, iid | 0.0370 / 0.0385 | 230 / 230 | 0% / 0% | traded 3% of steps |
+| (2) Trades above 3.0x, floor otherwise, iid | 0.0380 / 0.0295 | 230 / 230 | 0% / 0% | traded 0% of steps |
+| (2) Trades above 1.5x, floor otherwise, iid, 30 equal assets | 0.0565 / 0.0750 | 230 / 230 | 0% / 0% | above nominal; traded 100% of steps |
+| (2) Trades above 2.0x, floor otherwise, iid, 30 equal assets | 0.0565 / 0.0750 | 230 / 230 | 0% / 0% | above nominal; traded 100% of steps |
+| (2) Trades above 3.0x, floor otherwise, iid, 30 equal assets | 0.0575 / 0.0765 | 230 / 230 | 0% / 0% | above nominal; traded 71% of steps |
+| (2) Trades above 1.5x, floor otherwise, iid, 50 equal assets | 0.0565 / 0.0640 | 230 / 230 | 0% / 0% | above nominal; traded 99% of steps |
+| (2) Trades above 2.0x, floor otherwise, iid, 50 equal assets | 0.0580 / 0.0640 | 230 / 230 | 0% / 0% | above nominal; traded 98% of steps |
+| (2) Trades above 3.0x, floor otherwise, iid, 50 equal assets | 0.0585 / 0.0675 | 230 / 230 | 0% / 0% | above nominal; traded 95% of steps |
+| (2) Trades above 1.5x, floor otherwise, iid, 58 equal assets | 0.0800 / 0.0880 | 230 / 230 | 0% / 0% | above nominal; traded 98% of steps |
+| (2) Trades above 2.0x, floor otherwise, iid, 58 equal assets | 0.0790 / 0.0875 | 230 / 230 | 0% / 0% | above nominal; traded 96% of steps |
+| (2) Trades above 3.0x, floor otherwise, iid, 58 equal assets | 0.0795 / 0.0900 | 230 / 230 | 0% / 0% | above nominal; traded 93% of steps |
+| (3) Trades above 1.5x, floor otherwise, GARCH | 0.0350 / 0.0350 | 230 / 230 | 0% / 0% | traded 82% of steps |
+| (3) Trades above 2.0x, floor otherwise, GARCH | 0.0340 / 0.0370 | 230 / 230 | 0% / 0% | traded 10% of steps |
+| (3) Trades above 3.0x, floor otherwise, GARCH | 0.0370 / 0.0300 | 230 / 230 | 0% / 0% | traded 0% of steps |
+| (3) Trades above 1.5x, floor otherwise, GARCH, 50 assets | 0.0450 / 0.0565 | 230 / 230 | 0% / 0% | above nominal; traded 100% of steps |
+| (3) Trades above 2.0x, floor otherwise, GARCH, 50 assets | 0.0455 / 0.0570 | 230 / 230 | 0% / 0% | above nominal; traded 98% of steps |
+| (3) Trades above 3.0x, floor otherwise, GARCH, 50 assets | 0.0455 / 0.0550 | 230 / 230 | 0% / 0% | above nominal; traded 95% of steps |
+| (3) Trades above 1.5x, floor otherwise, one-factor GARCH | 0.0305 / 0.0320 | 230 / 230 | 0% / 0% | traded 64% of steps |
+| (3) Trades above 2.0x, floor otherwise, one-factor GARCH | 0.0330 / 0.0305 | 230 / 230 | 0% / 0% | traded 5% of steps |
+| (3) Trades above 3.0x, floor otherwise, one-factor GARCH | 0.0315 / 0.0275 | 230 / 230 | 0% / 0% | traded 0% of steps |
 
 ### (d) Pauses within the budget
 
@@ -251,41 +275,41 @@ At most T - min_t - 1 inactive steps, warm-up included, and a stop only with mor
 
 | Row, n = 1 / 2 (T_eff median at n = 1) | Window, warm-up 20, 20 | Window, warm-up 120, 20 | Window, warm-up 250, 20 | Window, warm-up 60, 60 |
 |--|--|--|--|--|
-| (1) Window's smallest eigenvalue, iid | 0.0370 / 0.0345 (230) | 0.0375 / 0.0320 (230) | 0.0400 / 0.0365 (230) | 0.0275 / 0.0220 (190) |
-| (1) Direction most underestimated, iid | 0.0375 / 0.0325 (230) | 0.0295 / 0.0295 (230) | 0.0290 / 0.0265 (230) | 0.0300 / 0.0315 (190) |
-| (1) Window's smallest eigenvalue, iid, 30 equal assets | 0.0395 / 0.0355 (230) | 0.0275 / 0.0350 (227) | 0.0270 / 0.0365 (226) | 0.0320 / 0.0365 (190) |
-| (1) Direction most underestimated, iid, 30 equal assets | 0.0395 / 0.0355 (230) | 0.0275 / 0.0350 (227) | 0.0270 / 0.0365 (226) | 0.0320 / 0.0365 (190) |
-| (1) Window's smallest eigenvalue, iid, 50 equal assets | 0.0395 / 0.0285 (230) | 0.0300 / 0.0350 (225) | 0.0280 / 0.0340 (224) | 0.0350 / 0.0345 (190) |
-| (1) Direction most underestimated, iid, 50 equal assets | 0.0330 / 0.0310 (230) | 0.0300 / 0.0355 (225) | 0.0280 / 0.0335 (224) | 0.0350 / 0.0345 (190) |
-| (1) Window's smallest eigenvalue, iid, 58 equal assets | 0.0340 / 0.0345 (230) | 0.0320 / 0.0420 (225) | 0.0285 / 0.0375 (224) | 0.0455 / 0.0510 (189) above nominal |
-| (1) Direction most underestimated, iid, 58 equal assets | 0.0340 / 0.0345 (230) | 0.0320 / 0.0420 (225) | 0.0285 / 0.0375 (224) | 0.0455 / 0.0510 (189) above nominal |
-| (1) Window's smallest eigenvalue, GARCH | 0.0420 / 0.0340 (230) | 0.0290 / 0.0215 (230) | 0.0270 / 0.0195 (230) | 0.0220 / 0.0170 (190) |
-| (1) Direction most underestimated, GARCH | 0.0280 / 0.0325 (230) | 0.0270 / 0.0220 (230) | 0.0260 / 0.0250 (230) | 0.0320 / 0.0245 (190) |
-| (1) Window's smallest eigenvalue, GARCH, 50 assets | 0.0310 / 0.0225 (230) | 0.0435 / 0.0520 (229) above nominal | 0.0405 / 0.0495 (229) | 0.0240 / 0.0240 (190) |
-| (1) Direction most underestimated, GARCH, 50 assets | 0.0270 / 0.0220 (230) | 0.0285 / 0.0305 (224) | 0.0265 / 0.0315 (222) | 0.0230 / 0.0220 (190) |
-| (1) Window's smallest eigenvalue, one-factor GARCH | 0.0395 / 0.0355 (230) | 0.0385 / 0.0280 (230) | 0.0345 / 0.0260 (230) | 0.0215 / 0.0180 (190) |
-| (1) Direction most underestimated, one-factor GARCH | 0.0400 / 0.0320 (230) | 0.0330 / 0.0310 (230) | 0.0305 / 0.0320 (230) | 0.0300 / 0.0285 (190) |
-| (2) Trades above 1.5x, floor otherwise, iid | 0.0365 / 0.0330 (230) | 0.0220 / 0.0220 (230) | 0.0220 / 0.0220 (230) | 0.0325 / 0.0315 (190) |
-| (2) Trades above 2.0x, floor otherwise, iid | 0.0370 / 0.0400 (230) | 0.0305 / 0.0300 (230) | 0.0320 / 0.0290 (230) | 0.0260 / 0.0250 (190) |
-| (2) Trades above 3.0x, floor otherwise, iid | 0.0450 / 0.0520 (230) above nominal | 0.0385 / 0.0345 (230) | 0.0390 / 0.0355 (230) | 0.0260 / 0.0250 (190) |
-| (2) Trades above 1.5x, floor otherwise, iid, 30 equal assets | 0.0395 / 0.0355 (230) | 0.0600 / 0.0750 (230) above nominal | 0.0600 / 0.0815 (230) above nominal | 0.0320 / 0.0365 (190) |
-| (2) Trades above 2.0x, floor otherwise, iid, 30 equal assets | 0.0390 / 0.0350 (230) | 0.0555 / 0.0795 (230) above nominal | 0.0550 / 0.0815 (230) above nominal | 0.0320 / 0.0365 (190) |
-| (2) Trades above 3.0x, floor otherwise, iid, 30 equal assets | 0.0475 / 0.0500 (230) | 0.0680 / 0.0925 (230) above nominal | 0.0680 / 0.0925 (230) above nominal | 0.0395 / 0.0400 (190) |
-| (2) Trades above 1.5x, floor otherwise, iid, 50 equal assets | 0.0365 / 0.0360 (230) | 0.0620 / 0.0715 (230) above nominal | 0.0585 / 0.0695 (230) above nominal | 0.0350 / 0.0345 (190) |
-| (2) Trades above 2.0x, floor otherwise, iid, 50 equal assets | 0.0410 / 0.0410 (230) | 0.0630 / 0.0710 (230) above nominal | 0.0625 / 0.0705 (230) above nominal | 0.0350 / 0.0345 (190) |
-| (2) Trades above 3.0x, floor otherwise, iid, 50 equal assets | 0.0405 / 0.0370 (230) | 0.0575 / 0.0705 (230) above nominal | 0.0570 / 0.0700 (230) above nominal | 0.0350 / 0.0345 (190) |
-| (2) Trades above 1.5x, floor otherwise, iid, 58 equal assets | 0.0465 / 0.0375 (230) | 0.0580 / 0.0805 (230) above nominal | 0.0620 / 0.0850 (230) above nominal | 0.0590 / 0.0700 (190) above nominal |
-| (2) Trades above 2.0x, floor otherwise, iid, 58 equal assets | 0.0445 / 0.0350 (230) | 0.0600 / 0.0815 (230) above nominal | 0.0615 / 0.0835 (230) above nominal | 0.0590 / 0.0700 (190) above nominal |
-| (2) Trades above 3.0x, floor otherwise, iid, 58 equal assets | 0.0445 / 0.0350 (230) | 0.0625 / 0.0825 (230) above nominal | 0.0600 / 0.0865 (230) above nominal | 0.0590 / 0.0700 (190) above nominal |
-| (3) Trades above 1.5x, floor otherwise, GARCH | 0.0280 / 0.0325 (230) | 0.0270 / 0.0275 (230) | 0.0250 / 0.0210 (230) | 0.0290 / 0.0275 (190) |
-| (3) Trades above 2.0x, floor otherwise, GARCH | 0.0305 / 0.0290 (230) | 0.0355 / 0.0290 (230) | 0.0355 / 0.0315 (230) | 0.0300 / 0.0230 (190) |
-| (3) Trades above 3.0x, floor otherwise, GARCH | 0.0295 / 0.0400 (230) | 0.0315 / 0.0325 (230) | 0.0315 / 0.0355 (230) | 0.0295 / 0.0255 (190) |
-| (3) Trades above 1.5x, floor otherwise, GARCH, 50 assets | 0.0340 / 0.0325 (230) | 0.0600 / 0.0710 (230) above nominal | 0.0610 / 0.0655 (230) above nominal | 0.0230 / 0.0220 (190) |
-| (3) Trades above 2.0x, floor otherwise, GARCH, 50 assets | 0.0310 / 0.0250 (230) | 0.0615 / 0.0700 (230) above nominal | 0.0635 / 0.0675 (230) above nominal | 0.0230 / 0.0220 (190) |
-| (3) Trades above 3.0x, floor otherwise, GARCH, 50 assets | 0.0305 / 0.0260 (230) | 0.0620 / 0.0675 (230) above nominal | 0.0620 / 0.0650 (230) above nominal | 0.0230 / 0.0220 (190) |
-| (3) Trades above 1.5x, floor otherwise, one-factor GARCH | 0.0400 / 0.0320 (230) | 0.0295 / 0.0345 (230) | 0.0310 / 0.0320 (230) | 0.0395 / 0.0295 (190) |
-| (3) Trades above 2.0x, floor otherwise, one-factor GARCH | 0.0375 / 0.0290 (230) | 0.0390 / 0.0315 (230) | 0.0380 / 0.0310 (230) | 0.0370 / 0.0310 (190) |
-| (3) Trades above 3.0x, floor otherwise, one-factor GARCH | 0.0450 / 0.0415 (230) | 0.0320 / 0.0245 (230) | 0.0295 / 0.0220 (230) | 0.0365 / 0.0280 (190) |
+| (1) Window's smallest eigenvalue, iid | 0.0355 / 0.0340 (230) | 0.0350 / 0.0310 (230) | 0.0320 / 0.0295 (230) | 0.0285 / 0.0240 (190) |
+| (1) Direction most underestimated, iid | 0.0380 / 0.0405 (230) | 0.0310 / 0.0315 (230) | 0.0300 / 0.0290 (230) | 0.0295 / 0.0245 (190) |
+| (1) Window's smallest eigenvalue, iid, 30 equal assets | 0.0355 / 0.0340 (230) | 0.0235 / 0.0305 (227) | 0.0210 / 0.0295 (226) | 0.0265 / 0.0295 (190) |
+| (1) Direction most underestimated, iid, 30 equal assets | 0.0355 / 0.0340 (230) | 0.0235 / 0.0305 (227) | 0.0210 / 0.0295 (226) | 0.0265 / 0.0295 (190) |
+| (1) Window's smallest eigenvalue, iid, 50 equal assets | 0.0300 / 0.0330 (230) | 0.0310 / 0.0295 (226) | 0.0285 / 0.0275 (224) | 0.0340 / 0.0320 (190) |
+| (1) Direction most underestimated, iid, 50 equal assets | 0.0300 / 0.0330 (230) | 0.0310 / 0.0295 (226) | 0.0285 / 0.0275 (224) | 0.0340 / 0.0320 (190) |
+| (1) Window's smallest eigenvalue, iid, 58 equal assets | 0.0345 / 0.0285 (230) | 0.0255 / 0.0315 (225) | 0.0215 / 0.0280 (224) | 0.0445 / 0.0415 (189) |
+| (1) Direction most underestimated, iid, 58 equal assets | 0.0345 / 0.0285 (230) | 0.0255 / 0.0315 (225) | 0.0215 / 0.0280 (224) | 0.0445 / 0.0415 (189) |
+| (1) Window's smallest eigenvalue, GARCH | 0.0245 / 0.0200 (230) | 0.0230 / 0.0205 (230) | 0.0245 / 0.0180 (230) | 0.0275 / 0.0155 (190) |
+| (1) Direction most underestimated, GARCH | 0.0305 / 0.0285 (230) | 0.0310 / 0.0300 (230) | 0.0290 / 0.0280 (230) | 0.0240 / 0.0210 (190) |
+| (1) Window's smallest eigenvalue, GARCH, 50 assets | 0.0280 / 0.0230 (230) | 0.0350 / 0.0510 (229) above nominal | 0.0360 / 0.0490 (229) | 0.0275 / 0.0195 (190) |
+| (1) Direction most underestimated, GARCH, 50 assets | 0.0350 / 0.0195 (230) | 0.0205 / 0.0265 (224) | 0.0165 / 0.0220 (222) | 0.0270 / 0.0205 (190) |
+| (1) Window's smallest eigenvalue, one-factor GARCH | 0.0300 / 0.0290 (230) | 0.0295 / 0.0275 (230) | 0.0275 / 0.0280 (230) | 0.0260 / 0.0215 (190) |
+| (1) Direction most underestimated, one-factor GARCH | 0.0435 / 0.0370 (230) | 0.0320 / 0.0310 (230) | 0.0285 / 0.0300 (230) | 0.0350 / 0.0305 (190) |
+| (2) Trades above 1.5x, floor otherwise, iid | 0.0380 / 0.0410 (230) | 0.0330 / 0.0360 (230) | 0.0330 / 0.0350 (230) | 0.0355 / 0.0310 (190) |
+| (2) Trades above 2.0x, floor otherwise, iid | 0.0395 / 0.0425 (230) | 0.0395 / 0.0400 (230) | 0.0400 / 0.0395 (230) | 0.0260 / 0.0250 (190) |
+| (2) Trades above 3.0x, floor otherwise, iid | 0.0450 / 0.0420 (230) | 0.0390 / 0.0330 (230) | 0.0395 / 0.0335 (230) | 0.0260 / 0.0250 (190) |
+| (2) Trades above 1.5x, floor otherwise, iid, 30 equal assets | 0.0355 / 0.0340 (230) | 0.0590 / 0.0790 (230) above nominal | 0.0605 / 0.0765 (230) above nominal | 0.0265 / 0.0295 (190) |
+| (2) Trades above 2.0x, floor otherwise, iid, 30 equal assets | 0.0355 / 0.0345 (230) | 0.0575 / 0.0790 (230) above nominal | 0.0570 / 0.0805 (230) above nominal | 0.0265 / 0.0295 (190) |
+| (2) Trades above 3.0x, floor otherwise, iid, 30 equal assets | 0.0405 / 0.0405 (230) | 0.0645 / 0.0905 (230) above nominal | 0.0650 / 0.0905 (230) above nominal | 0.0345 / 0.0260 (190) |
+| (2) Trades above 1.5x, floor otherwise, iid, 50 equal assets | 0.0415 / 0.0350 (230) | 0.0590 / 0.0825 (230) above nominal | 0.0625 / 0.0850 (230) above nominal | 0.0340 / 0.0320 (190) |
+| (2) Trades above 2.0x, floor otherwise, iid, 50 equal assets | 0.0420 / 0.0420 (230) | 0.0610 / 0.0820 (230) above nominal | 0.0615 / 0.0855 (230) above nominal | 0.0340 / 0.0320 (190) |
+| (2) Trades above 3.0x, floor otherwise, iid, 50 equal assets | 0.0405 / 0.0370 (230) | 0.0620 / 0.0865 (230) above nominal | 0.0615 / 0.0870 (230) above nominal | 0.0340 / 0.0320 (190) |
+| (2) Trades above 1.5x, floor otherwise, iid, 58 equal assets | 0.0420 / 0.0335 (230) | 0.0625 / 0.0795 (230) above nominal | 0.0695 / 0.0845 (230) above nominal | 0.0550 / 0.0650 (190) above nominal |
+| (2) Trades above 2.0x, floor otherwise, iid, 58 equal assets | 0.0445 / 0.0350 (230) | 0.0630 / 0.0815 (230) above nominal | 0.0695 / 0.0850 (230) above nominal | 0.0550 / 0.0650 (190) above nominal |
+| (2) Trades above 3.0x, floor otherwise, iid, 58 equal assets | 0.0445 / 0.0350 (230) | 0.0645 / 0.0825 (230) above nominal | 0.0675 / 0.0845 (230) above nominal | 0.0550 / 0.0650 (190) above nominal |
+| (3) Trades above 1.5x, floor otherwise, GARCH | 0.0310 / 0.0285 (230) | 0.0335 / 0.0330 (230) | 0.0340 / 0.0310 (230) | 0.0295 / 0.0225 (190) |
+| (3) Trades above 2.0x, floor otherwise, GARCH | 0.0280 / 0.0265 (230) | 0.0325 / 0.0305 (230) | 0.0310 / 0.0320 (230) | 0.0310 / 0.0270 (190) |
+| (3) Trades above 3.0x, floor otherwise, GARCH | 0.0255 / 0.0325 (230) | 0.0310 / 0.0330 (230) | 0.0315 / 0.0355 (230) | 0.0295 / 0.0255 (190) |
+| (3) Trades above 1.5x, floor otherwise, GARCH, 50 assets | 0.0240 / 0.0190 (230) | 0.0585 / 0.0765 (230) above nominal | 0.0580 / 0.0745 (230) above nominal | 0.0270 / 0.0205 (190) |
+| (3) Trades above 2.0x, floor otherwise, GARCH, 50 assets | 0.0320 / 0.0265 (230) | 0.0595 / 0.0750 (230) above nominal | 0.0585 / 0.0745 (230) above nominal | 0.0270 / 0.0205 (190) |
+| (3) Trades above 3.0x, floor otherwise, GARCH, 50 assets | 0.0305 / 0.0260 (230) | 0.0595 / 0.0725 (230) above nominal | 0.0570 / 0.0770 (230) above nominal | 0.0270 / 0.0205 (190) |
+| (3) Trades above 1.5x, floor otherwise, one-factor GARCH | 0.0435 / 0.0375 (230) | 0.0240 / 0.0265 (230) | 0.0245 / 0.0275 (230) | 0.0390 / 0.0305 (190) |
+| (3) Trades above 2.0x, floor otherwise, one-factor GARCH | 0.0485 / 0.0425 (230) | 0.0315 / 0.0290 (230) | 0.0305 / 0.0295 (230) | 0.0375 / 0.0330 (190) |
+| (3) Trades above 3.0x, floor otherwise, one-factor GARCH | 0.0435 / 0.0445 (230) | 0.0310 / 0.0255 (230) | 0.0290 / 0.0235 (230) | 0.0365 / 0.0280 (190) |
 | Pauses after each losing step, iid | 0.0265 / 0.0225 (153) | 0.0285 / 0.0230 (153) | 0.0300 / 0.0265 (153) | 0.0235 / 0.0235 (127) |
 | Pauses while behind, iid | 0.0185 / 0.0205 (101) | 0.0210 / 0.0190 (101) | 0.0210 / 0.0205 (101) | 0.0160 / 0.0155 (101) |
 | Pauses where the window overestimates, iid | 0.0250 / 0.0170 (124) | 0.0180 / 0.0180 (118) | 0.0175 / 0.0150 (117) | 0.0125 / 0.0150 (101) |

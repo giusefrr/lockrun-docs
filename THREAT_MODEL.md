@@ -507,11 +507,15 @@ The agent's launch check read this as the profile it asked for (every field matc
   a PEM file for now; an ssh-agent or a hardware key can replace it without changing the request
   (plan items 6 and 15).
 
-## 5a. Statistical rule: the joint bar (27 October 2026)
+## 5a. Statistical rule: the joint bar (27 October 2026; rule version 2, 30 October 2026)
 
 A rule change, for external review (the DSR's authors among the reviewers). The simulations behind
-every number here are in `tools/joint_bar/` (README there), the rule in `lockrun/exposure.py`,
-`lockrun/calibration.py` and `lockrun/trials.py` (`evaluate_promotion`).
+every number here are in `tools/joint_bar/` (README there; the numpy-only copy a reviewer runs without
+lockrun, and its measurements of the rule's versions, in `tools/joint_bar/standalone/`), the rule in
+`lockrun/exposure.py`, `lockrun/calibration.py` and `lockrun/trials.py` (`evaluate_promotion`). Two
+versions of the rule are in force, each holdout under the one it was initialised with (below): version
+2, the plain t-statistic, for every holdout initialised since 30 October 2026; version 1, the PSR
+statistic, for those initialised before.
 
 **The problem: optional stopping.** A strategy that watches its own running t-statistic and goes
 flat once it is ahead keeps the t-statistic of its first k periods, while the PSR counts all T: the
@@ -530,10 +534,10 @@ trading again for the last period (0.17) or weights times 1e-6 instead of zero (
    risk (weights in S's null space) or risk under 10% of the strategy's median active risk. Normalizing
    by gross exposure instead missed a hedge and spreading over 100 assets at n = 1 (fixed-T value: hedge
    0.232, 100 assets 0.088; sequential value: hedge 0.0915, 100 assets 0.0285).
-2. **T_eff.** The statistic is the PSR statistic against 0, z = sr sqrt(T_eff - 1) / sqrt(1 - skew sr
-   + (kurt - 1)/4 sr^2), on the active steps' normalized returns; T_eff, their number, is what min_t
-   applies to.
-3. **The joint bar.** F is the null CDF of sup over k in [min_t, T] of z_k for one trial with iid
+2. **T_eff.** The statistic z is, on the active steps' normalized returns, under version 2 the plain
+   t-statistic, z = sr sqrt(T_eff); under version 1 the PSR statistic against 0, z = sr sqrt(T_eff - 1)
+   / sqrt(1 - skew sr + (kurt - 1)/4 sr^2). T_eff, their number, is what min_t applies to.
+3. **The joint bar.** F is the null CDF of sup over k in [min_t, T] of z_k (the rule's statistic) for one trial with iid
    Student-t returns (the researcher may stop at any k), simulated at holdout-init on risk's laptop:
    the df fitted on the holdout's residuals by profile likelihood, floor 4 (fewer than 30 residuals:
    the floor, recorded as not fitted), 2M paths, a recorded seed. For n trials each free to stop,
@@ -550,6 +554,41 @@ trading again for the last period (0.17) or weights times 1e-6 instead of zero (
    comparison; the researcher sees the same fields as before, `value` now the joint bar's and
    `label` "joint bar".
 
+**The rule's version (30 October 2026).** The assumptions table (`tools/joint_bar/standalone`, `run.py
+assumptions`) gave an adversary the estimator's state: on a universe near the window's size (58 equal
+assets, a 60-row window), it puts the whole gross in the direction the window's covariance most
+underestimates, at a fixed risk where the true risk exceeds the estimate, every step active. One
+normalized return then dwarfs the others; its skew and kurtosis shrink the PSR's denominator and lift z
+far above the t-statistic. **Under version 1 that passed at 0.0900 (n = 2, 2000 seeds), 0.0858 on 8000
+fresh seeds at the stop the first 2000 chose, and 0.0905 at a window of 120 or 250**, nominal 0.05. The
+PSR denominator was manipulable by one constructed outlier on a near-singular window.
+
+Candidates, each measured over the assumptions and main tables at windows 20, 60, 120 and 250 and
+warm-ups 20 and 60, with honest power, 2000 seeds (`run.py fixes`; C1 and C2 on the rows that decide them
+and rows aimed at them, `run.py targeted`; the leader on 8000 fresh seeds, `run.py confirm`), at the default
+window 60 and warm-up 20:
+
+| Candidate | Worst cell | Cells above nominal | Why taken or dropped |
+|--|--|--|--|
+| A: the plain t (its own null table) | 0.0550 (2000 seeds); **0.0498 on 8000 fresh seeds** at the stop the first chose | 5; 0 on fresh seeds | **taken**: the outlier no longer lifts the statistic; no fresh cell above nominal (standard error 0.0024); power unchanged (0.1000 / 0.3325 / 0.6895 / 0.9300 at Sharpe 1 to 4) |
+| A + B1: S shrunk toward its diagonal (the estimator's intensity) | 0.0565 | 18 | dropped: more cells above nominal than A, and it overstates a hedge's risk, which gives the hedge back its statistic (worst hedge 0.0465, against 0.0195 under A) |
+| A + B2: a window and warm-up of at least 3 times the held assets | 0.0515 | 2 | dropped: refusal; a universe that does not fit is refused outright (22 cells in full), and the longer warm-up takes up the pause budget |
+| A + B3: a step whose smallest window eigenvalue is under 1% of the median inactive | 0.0545 | 5 | dropped: refuses every honest multi-asset strategy (T_eff 0, 100% refused; 242 cells refused in full) |
+| A + C1: a step's risk raised to f x the median risk, not excluded (f 0.25, 0.5) | 0.0535, A's | on 67 targeted rows: 7 and 6 of 138 (A: 7) | dropped: the worst cell unchanged; pauses at tiny weights become active steps (T_eff 230, against 116 to 153) and pass at up to 0.0505 (0.0265 under A) |
+| A + C2: normalized returns winsorized at k sd, the bar recalibrated (k 3, 4, 5) | 0.0605 to 0.0620 (0.0625 with C1) | on 67 targeted rows: 30 to 42 of 138 (A: 7) | dropped: the clip removes a protection; where these adversaries aim, 81% to 85% of normalized returns hit it |
+
+**What a version is.** The rule's parameters, {rule_version, statistic, estimator, window, warmup}, are in
+the init record under risk's calibration signature and in the data host's signed install fields; every
+promote record repeats them. Version 2 is the plain t with the sample covariance, window 60, warm-up 20;
+B and C stay computable behind the same parameters, none the default. An init with no rule (before 30
+October 2026) is version 1, the PSR statistic and the sample covariance at its exposure parameters: its
+joint bar is the PSR's, its promotes are computed under version 1, and its verdicts stay valid
+(sign-verdicts recomputes each under the rule its holdout was calibrated under, and a promote record
+written before the version was recorded carries none). A data host refuses to install a holdout whose
+rule it does not compute (an unknown rule_version, statistic or estimator) and writes nothing; the replay
+recomputes the data host's moments under the holdout's rule, and sign-verdicts refuses a promote naming
+another. Holdouts are not migrated: a holdout's rule is the one its table was calibrated for.
+
 **Who computes what.** The data host signs each run's T_eff and normalized moments in its
 data_outcome, for a whole series and for a failed run's partial returns; risk's replay recomputes them
 from the plaintext and the runner-signed weights (and, since the same day, the T, moments, k and
@@ -561,30 +600,42 @@ verdict from the init's table and refuses a holdout without one; `verify` checks
 with the plaintext, fits and simulates again: the table must reproduce exactly.
 
 **What was measured (PASS rate under the null, 2000 seeds per cell, nominal 0.05).** Through the
-implemented code (`tests/risk_world.py`; the suite pins the same cells with fewer seeds):
+implemented code (`tests/risk_world.py`; the suite pins the same cells with fewer seeds), under each
+version's joint bar:
 
-| Researcher strategy | Before the rule (n = 1 / 2) | Joint bar, c(n) (n = 1 / 2) |
-|--|--|--|
-| Honest, constant exposure | 0.0115 / 0.0020 | 0.0135 / 0.0105 |
-| Honest, 10% random flat days | 0.0140 / 0.0020 | 0.0140 / 0.0100 |
-| Flat once ahead | 0.257 / 0.071 | 0.0205 / 0.0160 |
-| Flat, then trading again for the last 1 / 2 / 5 periods | 0.164 / 0.120 / 0.083 (n = 1) | 0.0205 / 0.0200 / 0.0175 (n = 1) |
-| Weights times 1e-6 / 0.01 / 0.05 once ahead | 0.257 / 0.200 / 0.112 (n = 1) | 0.0210 / 0.0210 / 0.0175 (n = 1) |
-| Same gross over every asset (8 / 100 assets) | 0.014 / 0.0165 (n = 1) | 0.0130 / 0.0130 (n = 1) |
-| Hedge of two twins / with a drifting ratio | 0.129 / 0.0835 (n = 1) | 0.0205 / 0.0165 (n = 1) |
-| Only the lowest-variance asset | 0.035 (n = 1) | 0.0150 (n = 1) |
-| Pausing in the window covariance's null space (100 assets) | not run | 0.0125 / 0.0075 |
-| An asset whose volatility the window lags (falls tenfold) | not run | 0.0200 / 0.0175 |
-| Every trial stopping at c(n), n = 1 to 50, normal / Student-t(4) | not run | normal: at most 0.0205 over every stopping rule tried (0.0200 at the c(n) stop); Student-t(4): at most 0.0280 |
+| Researcher strategy | Before the rule (n = 1 / 2) | Version 1, the PSR statistic (n = 1 / 2) | Version 2, the plain t (n = 1 / 2) |
+|--|--|--|--|
+| Honest, constant exposure | 0.0115 / 0.0020 | 0.0135 / 0.0105 | 0.0130 / 0.0105 |
+| Honest, 10% random flat days | 0.0140 / 0.0020 | 0.0140 / 0.0100 | 0.0135 / 0.0095 |
+| Flat once ahead | 0.257 / 0.071 | 0.0205 / 0.0160 | 0.0200 / 0.0165 |
+| Flat, then trading again for the last 1 / 2 / 5 periods | 0.164 / 0.120 / 0.083 (n = 1) | 0.0205 / 0.0200 / 0.0175 (n = 1) | 0.0200 / 0.0195 / 0.0165 (n = 1) |
+| Weights times 1e-6 / 0.01 / 0.05 once ahead | 0.257 / 0.200 / 0.112 (n = 1) | 0.0210 / 0.0210 / 0.0175 (n = 1) | 0.0205 / 0.0205 / 0.0170 (n = 1) |
+| Same gross over every asset (8 / 100 assets) | 0.014 / 0.0165 (n = 1) | 0.0130 / 0.0130 (n = 1) | 0.0125 / 0.0130 (n = 1) |
+| Hedge of two twins / with a drifting ratio | 0.129 / 0.0835 (n = 1) | 0.0205 / 0.0165 (n = 1) | 0.0195 / 0.0160 (n = 1) |
+| Only the lowest-variance asset | 0.035 (n = 1) | 0.0150 (n = 1) | 0.0145 (n = 1) |
+| Pausing in the window covariance's null space (100 assets) | not run | 0.0135 / 0.0115 | 0.0140 / 0.0120 |
+| An asset whose volatility the window lags (falls tenfold) | not run | 0.0200 / 0.0175 | 0.0180 / 0.0150 |
+| Every trial stopping at c(n), n = 1 to 50, normal / Student-t(4) | not run | normal: at most 0.0205 over every stopping rule tried (0.0200 at the c(n) stop); Student-t(4): 0.0280 on this row | normal: at most 0.0295, at the c(n) stop (n = 2); Student-t(4): at most 0.0385, at the c(n) stop (n = 1) |
+
+Version 2's bar on this holdout: c(1) 2.277, c(2) 2.585, c(5) 2.949, c(10) 3.193, c(50) 3.713, c(100) 3.927,
+c(1000) 4.530 (version 1's: 2.252, 2.552, 2.906, 3.146, 3.662, 3.854, 4.418). The estimator-aware adversary
+above is the standalone copy's (its decisions are the package's, `tests/test_joint_bar_standalone.py` and
+`tests/test_rule_variants_parity.py`, under both statistics).
 
 Each adversary cell is the worst over its stopping rule (c from 1.5 to 3.5, first stop from period 2,
 3, 20 or 100). The calibration takes 19 to 23 s for T = 250 and 200 to 240 s for T = 2500 on one core
 of a laptop (2M paths, 392 MiB at most); on the data host's droplet size it was not run.
 
+Version 1's column is the PSR statistic. The plain-t rule, z the t-statistic with no skew or kurtosis
+term and the bar the sup of that t, is in the product as version 2 (its column above), and the standalone
+copy measures it over the whole assumptions table. Worst cell of the whole table: 0.0498 on fresh seeds under the plain-t rule; the PSR rule reached 0.0858 against an estimator-aware adversary. On those 8000
+fresh seeds no cell of the 288 is above nominal; on the first 2000 seeds, at the worst stop, 5 are, the
+worst 0.0550, a figure that carries the selection over stops.
+
 **What is lost.**
 - **Power.** One honest trial holding one asset, daily periods, T = 250, true annualized Sharpe 1, 2,
-  3, 4: PASS 0.119, 0.413, 0.775, 0.962 before; 0.099, 0.337, 0.690, 0.931 now (pinned in
-  `tests/test_joint_bar_controls.py`). The 20-row warm-up leaves T_eff at most T - 20.
+  3, 4: PASS 0.119, 0.413, 0.775, 0.962 before; 0.099, 0.337, 0.690, 0.931 under version 1; 0.099,
+  0.331, 0.688, 0.930 under version 2 (pinned in `tests/test_joint_bar_controls.py`). The 20-row warm-up leaves T_eff at most T - 20.
 - **An edge in sizing is not measured.** Returns over their ex-ante risk weigh every active step
   alike: a strategy that takes a larger position when its per-period Sharpe is known to be higher
   loses that information (about 13% of the t-statistic (ratio 0.869; theoretical 0.83) in the documented case). A strategy whose
@@ -593,6 +644,9 @@ of a laptop (2M paths, 392 MiB at most); on the data host's droplet size it was 
   at promote, at the df floor (no return column to fit).
 - **Holdouts initialised before the rule** have no joint bar: their promotes are refused until the
   holdout is initialised again.
+- **The plain t ignores skew and kurtosis** in the statistic: the tail is in the calibration only,
+  through the df fitted on the holdout's residuals. The PSR's correction for them is what the outlier
+  exploited; a skewed honest strategy is graded as if symmetric.
 
 **Open for review.**
 - The independence assumption: c(n) is the quantile of the maximum of n independent trials. Trials on
@@ -601,6 +655,11 @@ of a laptop (2M paths, 392 MiB at most); on the data host's droplet size it was 
   in the calibration; one regime shift the window lags was simulated (above), not a clustered market.
 - The window (60 rows, 20 to start), the inactivity floor (10%) and the null-space threshold (a
   variance at most 1e-10 of the weights' uncorrelated variance), and that no shrinkage is applied.
+- Version 2's worst cell, 0.0498 on 8000 fresh seeds (the estimator-aware adversary trading above 3.0x
+  and at the floor otherwise on a GARCH market, n = 1): no fresh cell above nominal, but 0.0498 is not
+  far below it (standard error 0.0024), and on the first 2000 seeds 5 cells were, at most 0.0550. A universe near the window's size is where
+  the window's covariance is least reliable; none of the candidate bounds (B, C) closed it without a
+  cost measured above.
 - The scale's leave-one-out form, and that it uses t-statistics rather than Sharpes (T_eff differs
   across trials).
 - The value is F(z / s)^n with F interpolated between stored quantiles: it moves slightly with the

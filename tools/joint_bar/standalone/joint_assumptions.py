@@ -18,7 +18,7 @@ from __future__ import annotations
 import os
 import sys
 from collections import Counter
-from dataclasses import dataclass, field
+from dataclasses import dataclass, replace
 
 import numpy as np
 
@@ -45,13 +45,17 @@ def set_bars(bars: dict) -> None:
 
 MARKETS = {     # name: (kind, assets, regime)
     "iid": ("iid", 8, None), "iid50": ("iid", 50, None), "equal30": ("equal", 30, None),
-    "equal50": ("equal", 50, None), "equal58": ("equal", 58, None),
+    "equal50": ("equal", 50, None), "equal58": ("equal", 58, None), "equal20": ("equal", 20, None),
+    "equal45": ("equal", 45, None), "twin50": ("twin", 50, None),
+    "main": ("main", 8, None), "main100": ("main", 100, None), "main-regime": ("main", 8, jw.REGIME),
+    "t4": ("t4", 8, None), **{f"drift{s}": ("drift", 8, s) for s in (0, 1, 2, 3, 4)},
     "garch": ("garch", 8, None), "garch50": ("garch", 50, None), "garch100": ("garch", 100, None),
     "garch-regime": ("garch", 8, jw.REGIME),
     "factor": ("factor", 8, None), "factor50": ("factor", 50, None), "factor100": ("factor", 100, None),
     "factor-regime": ("factor", 8, jw.REGIME),
 }
-MARKET_NAMES = {"iid": "iid", "iid50": "iid, 50 assets", "equal30": "iid, 30 equal assets", "equal50": "iid, 50 equal assets",
+MARKET_NAMES = {"iid": "iid", "iid50": "iid, 50 assets", "equal20": "iid, 20 equal assets", "equal30": "iid, 30 equal assets", "equal45": "iid, 45 equal assets",
+                "twin50": "iid, 50 equal assets with twins", "equal50": "iid, 50 equal assets",
                 "equal58": "iid, 58 equal assets", "garch": "GARCH",
                 "garch50": "GARCH, 50 assets", "factor": "one-factor GARCH", "factor50": "one-factor GARCH, 50 assets"}
 
@@ -62,6 +66,14 @@ def returns_of(name: str, seed: int) -> tuple:
         return jw.market(seed, A), None
     if kind == "equal":
         return jw.equal_market(seed, A), None
+    if kind == "twin":
+        return jw.twin_equal_market(seed, A), None
+    if kind == "main":
+        return jw.market(seed, A, regime=regime), None
+    if kind == "t4":
+        return jw.market(seed, A, tail=4), None
+    if kind == "drift":
+        return jw.market(seed, A, drift=regime / np.sqrt(252)), None
     make = jw.garch_market if kind == "garch" else jw.factor_market
     return make(seed, A, regime=regime)
 
@@ -76,6 +88,15 @@ class AssumptionRow:
     ns: tuple = (1, 2)
     stops: tuple = tuple(STOPS)
     guard: bool = True            # stops only with more than min_t active steps
+    chosen: tuple = ()            # ((n, stop), ...): each n at this stop alone, the fresh seeds' confirmation
+
+    def stops_of(self, n: int) -> tuple:
+        return next(((s,) for m, s in self.chosen if m == n), self.stops)
+
+
+def with_chosen_stops(row: AssumptionRow, measured: dict) -> AssumptionRow:
+    """The row at the stop each of its n's worst rate had on the first seeds (their results, as saved)."""
+    return replace(row, chosen=tuple((int(n), tuple(c["stop"])) for n, c in measured["cells"].items()))
 
 
 def rows_of(parts: str) -> list:
@@ -109,6 +130,31 @@ def rows_of(parts: str) -> list:
         for m in ("garch", "garch50", "factor"):
             for f in FACTORS:
                 rows.append(AssumptionRow("c", f"(3) Trades above {f}x, floor otherwise, {MARKET_NAMES[m]}", m, "timed", f))
+    if "e" in parts:                       # aimed at the candidate fixes: B1, B2, B3
+        for m in ("equal20", "equal45", "twin50"):
+            rows.append(AssumptionRow("c", f"(1) Window's smallest eigenvalue, {MARKET_NAMES[m]}", m, "eigen"))
+            rows.append(AssumptionRow("c", f"(1) Direction most underestimated, {MARKET_NAMES[m]}", m, "under"))
+            for f in FACTORS:
+                rows.append(AssumptionRow("c", f"(2) Trades above {f}x, floor otherwise, {MARKET_NAMES[m]}", m, "timed", f))
+    if "f" in parts:                       # aimed at the bounds on one normalized return: C1, C2
+        for m in ("iid", "equal20", "equal30", "equal45", "equal50", "equal58", "twin50", "garch", "garch50", "factor"):
+            rows.append(AssumptionRow("f", f"(1) Window's smallest eigenvalue at constant estimated risk, {MARKET_NAMES[m]}", m, "eigen-const"))
+            rows.append(AssumptionRow("f", f"(1) Direction most underestimated at constant estimated risk, {MARKET_NAMES[m]}", m, "under-const"))
+        for m in ("iid", "equal50", "garch", "factor"):
+            for rule, label in (("losing", "after each losing step"), ("behind", "while behind"),
+                                ("timed", "where the window overestimates")):
+                rows.append(AssumptionRow("f", f"Pauses at tiny weights {label}, {MARKET_NAMES[m]}", m, "pause-tiny", rule))
+    if "m" in parts:
+        for r in jt.ROWS:
+            m = "t4" if r.tail else "main-regime" if r.kind == "regime" else "main" + ("100" if r.A == 100 else "")
+            stops = {"fixed": ((None, None),), "grid": tuple(jw.GRID), "regime": tuple(jw.GRID),
+                     "nullspace": tuple(jt.NULLSPACE_GRID), "stopping": ((None, None), (2.0, jw.MIN_T), (2.5, jw.MIN_T),
+                                                                        *STOPS[-2:])}[r.kind]
+            rows.append(AssumptionRow("m", f"Main: {r.name}", m, "stopping" if r.kind == "stopping" else "main", r,
+                                      jt.STOP_NS if r.kind == "stopping" else (1, 2), stops, False))
+    if "p" in parts:
+        for s in (0, 1, 2, 3, 4):
+            rows.append(AssumptionRow("p", f"Honest power, Sharpe {s}", f"drift{s}", "power", None, (1,), ((None, None),), False))
     if "d" in parts:
         for m in ("iid", "equal50", "garch", "factor"):
             for rule, label in (("losing", "after each losing step"), ("behind", "while behind"),
@@ -124,7 +170,7 @@ class Holdout:
         self.name, self.seed, self.p = name, seed, p
         self.R, self.sigma = returns_of(name, seed)
         self.A = self.R.shape[1]
-        self.cov = jr.window_covariances(self.R, p)
+        self.cov = jr.estimator(self.R, p)
         self.jb = BARS[jw.holdout_df(self.R)]
         self._sigma = self._eigen = self._under = None
         self.worlds: dict = {}
@@ -147,7 +193,13 @@ class Holdout:
 
 
 def _world(h: Holdout, row: AssumptionRow) -> jw.SeedWorld:
-    if row.kind == "main":
+    if row.kind == "power":
+        def one_asset(s, i, A):
+            W = np.zeros((jw.T, A))
+            W[:, 3] = 1.0
+            return W
+        base, key = one_asset, ("power",)
+    elif row.kind == "main":
         base, key = None, ("main",)
     elif row.kind == "stopping":
         base, key = None, ("main",)
@@ -158,6 +210,10 @@ def _world(h: Holdout, row: AssumptionRow) -> jw.SeedWorld:
         base, key = (lambda s, i, A: jw.eigen_weights(h.eigen(), s, i, h.cov, A)), ("eigen",)
     elif row.kind == "under":
         base, key = (lambda s, i, A: jw.eigen_weights(h.under()[0], s, i, h.cov, A)), ("under",)
+    elif row.kind == "eigen-const":
+        base, key = (lambda s, i, A: jw.constant_risk(jw.eigen_weights(h.eigen(), s, i, h.cov, A), h.cov)), ("eigen-const",)
+    elif row.kind == "under-const":
+        base, key = (lambda s, i, A: jw.constant_risk(jw.eigen_weights(h.under()[0], s, i, h.cov, A), h.cov)), ("under-const",)
     else:
         f = row.par
         base, key = (lambda s, i, A: jw.timed_weights(*h.under(), f, s, i, h.cov, A)), ("timed", f)
@@ -171,18 +227,21 @@ def _world(h: Holdout, row: AssumptionRow) -> jw.SeedWorld:
 def _trial_maker(h: Holdout, row: AssumptionRow, n: int, stop: tuple):
     label, k0 = stop
     c = jr.bar(h.jb, n) + (0.3 if label == "c(n)+0.3" else 0.0) if isinstance(label, str) else label
-    if row.kind == "pause":
-        cache = h.worlds.setdefault(("pause", row.par), {})
+    if row.kind in ("pause", "pause-tiny"):
+        cache = h.worlds.setdefault((row.kind, row.par), {})
+        tiny = 1e-6 if row.kind == "pause-tiny" else None
 
         def make(i):
             key = (i, c, k0)
             if key not in cache:
                 Sigma = h.Sigma if row.par == "timed" else None
-                W = jw.pausing_weights(row.par, h.seed, i, h.R, h.cov, Sigma, c, k0)
+                W = jw.pausing_weights(row.par, h.seed, i, h.R, h.cov, Sigma, c, k0, tiny=tiny)
                 cache[key] = jr.trial_of_weights(W, h.R, h.cov)
             return cache[key]
         return make
     w = _world(h, row)
+    if row.kind == "power":
+        return lambda i: w.trial(i, ("honest", None), None, None, "norm")
     if row.kind == "main":
         v = row.par.variant
         return lambda i: w.trial(i, v, c, k0, "norm")
@@ -196,11 +255,11 @@ def row_cells(h: Holdout, row: AssumptionRow) -> dict:
     """{(n, stop): (passed, the first trial's T_eff)} of one row on one holdout."""
     out = {}
     for n in row.ns:
-        for stop in row.stops:
+        for stop in row.stops_of(n):
             make = _trial_maker(h, row, n, stop)
             trials = [make(i) for i in range(n)]
             hd = jr.Holdout(trials)
-            passed = any(hd.joint(i, h.jb, jw.MIN_T, jw.THRESHOLD).passed for i in range(n))
+            passed = any(hd.joint(i, h.jb, jw.MIN_T, jw.THRESHOLD, h.p.get("stat", jr.DEFAULT_STAT)).passed for i in range(n))
             out[(n, stop)] = (passed, trials[0].t_eff or 0)
     return out
 
@@ -233,13 +292,13 @@ def holdout_dfs(job: tuple) -> set:
 
 def calibrate_df(job: tuple) -> tuple:
     """A table for this df: from cache_dir when it holds it (calibration is deterministic in its parameters)."""
-    df, paths, cache_dir = job
-    path = os.path.join(cache_dir, f"bar-{df!r}-{paths}.npz") if cache_dir else None
+    df, paths, cache_dir, stat = job
+    path = os.path.join(cache_dir, f"bar-{stat + '-' if stat != 'psr' else ''}{df!r}-{paths}.npz") if cache_dir else None
     if path and os.path.exists(path):
         with np.load(path) as f:
             return df, {"T": jw.T, "min_t": jw.MIN_T, "threshold": jw.THRESHOLD, "df": df, "paths": paths, "seed": jw.SEED,
                         "zs": f["zs"], "ps": f["ps"]}
-    jb = jr.calibrate(jw.T, jw.MIN_T, df, jw.THRESHOLD, paths, jw.SEED)
+    jb = jr.calibrate(jw.T, jw.MIN_T, df, jw.THRESHOLD, paths, jw.SEED, stat)
     if path:
         os.makedirs(cache_dir, exist_ok=True)
         np.savez(path + ".tmp.npz", zs=jb["zs"], ps=jb["ps"])
@@ -247,7 +306,7 @@ def calibrate_df(job: tuple) -> tuple:
     return df, jb
 
 
-def prepare_bars(rows: list, seeds: int, paths: int, pool, chunks, cache_dir: str | None = None) -> dict:
+def prepare_bars(rows: list, seeds: int, paths: int, pool, chunks, cache_dir: str | None = None, stat: str = jr.DEFAULT_STAT) -> dict:
     """Every holdout's fit, and a table per distinct df."""
     dfs: set = set()
     by_market: dict = {}
@@ -257,7 +316,7 @@ def prepare_bars(rows: list, seeds: int, paths: int, pool, chunks, cache_dir: st
             fits |= part
         by_market[name] = (min(fits), max(fits))
         dfs |= fits
-    bars = dict(pool.imap_unordered(calibrate_df, [(df, paths, cache_dir) for df in sorted(dfs)]))
+    bars = dict(pool.imap_unordered(calibrate_df, [(df, paths, cache_dir, stat) for df in sorted(dfs)]))
     return {"bars": bars, "df_range": by_market}
 
 
@@ -290,3 +349,69 @@ def assumptions(rows: list, seeds: int, pool, chunks, p: dict) -> dict:
             out[r.name]["traded"] = traded[r.name] / seeds
     print(f"  ... {len(rows)} rows", file=sys.stderr, flush=True)
     return out
+
+
+# ---------------------------------------------------------------- the candidate fixes, standalone only
+
+WINDOWS = ((60, 20), (20, 20), (120, 20), (250, 20), (60, 60))
+COVS = ("sample", "lw", "minwin", "eigfloor")
+FIX_NAMES = {"sample": "A", "lw": "A + B1", "minwin": "A + B2", "eigfloor": "A + B3"}
+FIX_PARTS = "abcdemp"
+AIMED_PARTS = "f"              # not in the full table: what each bound on one normalized return invites
+RISK_FLOORS = (0.25, 0.5)
+WINSORS = (3, 4, 5)
+
+
+def fix_name(c: dict) -> str:
+    bounds = ([f"C1 f={c['risk_floor']:g}"] if c.get("risk_floor") else []) + ([f"C2 k={c['winsor']:g}"] if c.get("winsor") else [])
+    return " + ".join(["A", *bounds]) if bounds else FIX_NAMES[c["cov"]]
+
+
+def bar_stat(c: dict) -> str:
+    """Whose table the configuration's bar is: a floor changes no null return, a winsorization does."""
+    return f"w{c['winsor']:g}" if c.get("winsor") else c["stat"]
+
+
+def fix_configurations() -> list:
+    """The covariance candidates first, so that a run saved before the bounds resumes; every window of each."""
+    base = {"stat": "t", "cov": "sample", "floor": jw.P["floor"]}
+    return [{**base, "cov": c, "window": w, "warmup": m} for w, m in WINDOWS for c in COVS] + \
+        [{**base, "risk_floor": f, "window": w, "warmup": m} for w, m in WINDOWS for f in RISK_FLOORS] + \
+        [{**base, "winsor": k, "window": w, "warmup": m} for w, m in WINDOWS for k in WINSORS] + \
+        [{**base, "risk_floor": 0.5, "winsor": 4, "window": w, "warmup": m} for w, m in WINDOWS]
+
+
+def targeted_configurations() -> list:
+    return [c for c in fix_configurations() if c["cov"] == "sample" and (c["window"], c["warmup"]) == WINDOWS[0]]
+
+
+# Above nominal under A at 60/20, 2000 seeds; the rest of the pass are the rows above nominal under the current rule,
+# the hedges and the pauses.
+ABOVE_UNDER_A = ("(1) Window's smallest eigenvalue, iid", "(1) Window's smallest eigenvalue, one-factor GARCH",
+                 "one-factor GARCH, rho = 0.5: flat once ahead", "(1) Direction most underestimated, GARCH",
+                 "(3) Trades above 3.0x, floor otherwise, GARCH")
+
+
+def targeted_rows() -> list:
+    def wanted(r):
+        attack = ((r.name.startswith("(2) Trades") and r.name.endswith(("iid, 30 equal assets", "iid, 50 equal assets", "iid, 58 equal assets")))
+                  or (r.name.startswith("(3) Trades") and r.name.endswith("GARCH, 50 assets")))
+        return attack or "Hedge" in r.name or r.part in ("d", "f") or r.name in ABOVE_UNDER_A
+    return [r for r in rows_of(FIX_PARTS + AIMED_PARTS) if wanted(r)]
+
+
+def fix_summary(rows: dict) -> dict:
+    """What the choice reads: the worst cell over the table, the hedges, the pauses, honest refusals, power."""
+    def cells(pred):
+        return [(c["rate"], k, n, c["t_eff"], c["refused"]) for k, v in rows.items() if pred(k, v)
+                for n, c in v["cells"].items()]
+    top = max(cells(lambda k, v: v["part"] != "p"), key=lambda x: x[0])
+    hedge = max(cells(lambda k, v: "Hedge" in k), key=lambda x: x[0])
+    pause = max(cells(lambda k, v: v["part"] == "d"), key=lambda x: x[0])
+    honest = cells(lambda k, v: "onest," in k and v["part"] == "m")
+    power = {k[-1]: rows[k]["cells"]["1"] for k in rows if k.startswith("Honest power")}
+    return {"worst": top, "hedge": hedge, "pause": pause, "above": sum(1 for v in rows.values() if v["part"] != "p"
+                                                                       for c in v["cells"].values() if c["rate"] > NOMINAL),
+            "honest_refused": max(x[4] for x in honest), "honest_t_eff": min(x[3] for x in honest),
+            "pause_t_eff": min(c[3] for c in cells(lambda k, v: v["part"] == "d")),
+            "power": {s: {"rate": c["rate"], "refused": c["refused"]} for s, c in power.items()}}

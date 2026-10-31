@@ -15,7 +15,7 @@ import numpy as np
 import joint_rule as jr
 import joint_world as jw
 
-JB = {}     # each worker's bars, set by the pool's initializer
+JB = {}     # each worker's bars and their statistic, set by the pool's initializer
 
 
 def set_bars(bars: dict) -> None:
@@ -64,7 +64,7 @@ def _passes(w: jw.SeedWorld, trials: list, jb: dict | None) -> bool:
     h = jr.Holdout(trials)
     if jb is None:
         return any(h.before(i, jw.MIN_T, jw.THRESHOLD, reserved=1).passed for i in range(len(trials)))
-    return any(h.joint(i, jb, jw.MIN_T, jw.THRESHOLD).passed for i in range(len(trials)))
+    return any(h.joint(i, jb, jw.MIN_T, jw.THRESHOLD, JB.get("stat", jr.DEFAULT_STAT)).passed for i in range(len(trials)))
 
 
 def _row_seed(row: Row, seed: int, before: bool) -> dict:
@@ -193,7 +193,7 @@ def _power_cell(job: tuple) -> dict:
         t = jr.trial_of_weights(W, R, jr.window_covariances(R))
         h = jr.Holdout([t])
         b += h.before(0, jw.MIN_T, jw.THRESHOLD, reserved=1).passed
-        j += h.joint(0, JB["normal"], jw.MIN_T, jw.THRESHOLD).passed
+        j += h.joint(0, JB["normal"], jw.MIN_T, jw.THRESHOLD, JB.get("stat", jr.DEFAULT_STAT)).passed
     return {s: (b, j)}
 
 
@@ -364,8 +364,8 @@ def dropped(seeds: int, pool, chunks) -> dict:
 
 # ---------------------------------------------------------------- the rest
 
-def bar_table() -> dict:
-    jb = jw.joint_bar()
+def bar_table(stat: str = jr.DEFAULT_STAT) -> dict:
+    jb = jw.joint_bar(stat)
     return {n: jr.bar(jb, n) for n in (1, 2, 5, 10, 50, 100, 1000)}
 
 
