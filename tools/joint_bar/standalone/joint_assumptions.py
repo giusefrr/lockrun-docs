@@ -301,8 +301,9 @@ def calibrate_df(job: tuple) -> tuple:
     jb = jr.calibrate(jw.T, jw.MIN_T, df, jw.THRESHOLD, paths, jw.SEED, stat)
     if path:
         os.makedirs(cache_dir, exist_ok=True)
-        np.savez(path + ".tmp.npz", zs=jb["zs"], ps=jb["ps"])
-        os.replace(path + ".tmp.npz", path)
+        tmp = f"{path}.{os.getpid()}.tmp.npz"       # each process its own: two computing one table cannot clash
+        np.savez(tmp, zs=jb["zs"], ps=jb["ps"])
+        os.replace(tmp, path)
     return df, jb
 
 

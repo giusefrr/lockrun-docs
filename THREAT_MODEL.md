@@ -512,9 +512,10 @@ The agent's launch check read this as the profile it asked for (every field matc
 A rule change, for external review (the DSR's authors among the reviewers). The simulations behind
 every number here are in `tools/joint_bar/` (README there; the numpy-only copy a reviewer runs without
 lockrun, and its measurements of the rule's versions, in `tools/joint_bar/standalone/`), the rule in
-`lockrun/exposure.py`, `lockrun/calibration.py` and `lockrun/trials.py` (`evaluate_promotion`). Two
+`lockrun/exposure.py`, `lockrun/calibration.py` and `lockrun/trials.py` (`evaluate_promotion`). Three
 versions of the rule are in force, each holdout under the one it was initialised with (below): version
-2, the plain t-statistic, for every holdout initialised since 30 October 2026; version 1, the PSR
+3, spending by trial, the default for new holdouts on this branch's code since 2 November 2026 (§5b);
+version 2, the plain t-statistic, for holdouts initialised from 30 October 2026; version 1, the PSR
 statistic, for those initialised before.
 
 **Scope.** Every result here is a result about lockrun's complete procedure (its exposure rules, risk normalization and stopping criterion), measured by simulation under the stated nulls. No theoretical claim about the PSR or the DSR as results is made.
@@ -667,6 +668,45 @@ worst 0.0550, a figure that carries the selection over stops.
 - The value is F(z / s)^n with F interpolated between stored quantiles: it moves slightly with the
   stored levels, the threshold's among them; the verdict is exactly z / s >= c(n) on that F.
 
+## 5b. Statistical rule: version 3, spending by trial (2 November 2026)
+
+**The hole.** Under versions 1 and 2 a promote was graded at c(n), n the openings so far, and a FAIL ended nothing. A researcher who
+stopped each trial at the bar and promoted after each opening spent about 5%/k at opening k, a sum with no ceiling: 0.1915 false
+promotions at 100 openings on GARCH (lower bound 0.187), 0.0683 at 2 on the plain market. Every earlier table graded all openings at the
+end, so none measured it, and §5a's "at or below" figures say nothing of it. **Who found it:** our own red-team engine, `tools/redteam/`,
+on 2 November 2026.
+
+**How version 3 closes it.** At init risk declares N, the planned openings. Opening k, counted across all researchers, carries in its
+record a bar b_k from alpha_k = 0.045/N for k <= N and 0.005 * 6 / (pi^2 (k - N)^2) beyond, so the alphas sum to at most 0.05 at any number
+of openings. A promote passes iff that trial's statistic exceeds b_k, and promotes change no bar. Before the first pass a researcher reads
+only the bit FAIL: no summaries, no statistics, no statuses; FAIL verdicts stay unpublished until K_risk retires the holdout; one anchor
+footprint per promote-related event; fixed slots (timeout + cleanup budget, from the schedule alone); promote answers on a fixed step. The first
+pass freezes the holdout, a reproduction ends it, a mismatch retires it. A dry-run lane on synthetic data gives researchers their
+errors and timings and shares nothing with the holdout. On version 1 and 2 holdouts every promote after the first FAIL is refused. The
+theorem, its assumptions and the channel table are in a proof that is not yet published (WHAT_IS_VERIFIED.md, status).
+
+| Run | Result |
+|--|--|
+| Version 3, all 37 families, N = 20, seed 0 | 0 findings, 0 near misses, nothing reached confirmation; best on search seeds `run_stop` 34/800 = 0.0425; sequential families only 1 to 4 generations |
+| Version 3, sequential and fail-bit families, N = 100, seed 1 | 0 findings, nothing reached confirmation; best `opening_spend` 13/300 = 0.0433; 9 to 17 generations |
+| Version 3, single-trial families, N = 1, seed 2 | 0 findings, nothing reached confirmation; best `leverage_burst` 7/300 = 0.0233 |
+| The findings of 2 November on version 3, 20000 seeds | `bar_crossing`, garch, 100 openings: 0.0495 and 0.0490 at N = 100, 0.0513 and 0.0482 at N = 20. `z_crossing`, t4, 81 openings: 0.0138 at N = 81, 0.0240 at N = 20 |
+| The 0.0513, on 100000 further seeds | 5050/100000 = 0.0505, lower bound 0.0494: not a finding |
+| Version 1, all families, seed 0 | Finding: `window_aim`, 58 equal assets, 100 openings, all spent before the promote: 0.2990, lower bound 0.2937. On version 3 the same strategy: 0.0002 at N = 100, 0.0008 at N = 20 |
+
+**What these results do not show.** On GARCH the bars run a little under their stated size: the attack at N = 100 has a union bound of 0.045 and measured 0.0495 (lower bound 0.047). The Student-t null of the calibration is a model, and this is the error in it. The same attack at N = 20 sits at about 0.05, 0.0505 on 100000 seeds, with no margin. That is not a finding, and it is not a guarantee either: the attacks were tuned against version 2, the search on version 3 did not rediscover anything as strong, so its clean reports are weaker evidence than they read, and a stronger attack on GARCH could cross 0.05.
+
+**What it costs.** A holdout ends at its first reproduced pass, also when shared; researchers lose summaries and statistics, keeping the dry run;
+past N bars rise quickly. Honest power, version 2 against 3, Sharpe 3, one asset, T = 250: N = 1, 0.707 and 0.689; N = 5, 0.353 and 0.425;
+N = 20, 0.219 and 0.253; N = 100, 0.103 and 0.129 (`tools/joint_bar/standalone/README.md`).
+
+**What stays open.**
+- **Version 1 and 2 holdouts stay exposed.** The refusal stops promoting after each opening, but they still show summaries, so a researcher can
+  read first and promote only a trial over the bar, with no FAIL ever written. Version 1 has its own finding as well, the `window_aim` above.
+- **Nothing here has run on a host.** Marks between jobs, shared hardware state and knocking a runner out (proof, A3) are checklist items for
+  the next deployment, `deploy/ITEM7_CHECKLIST.md`. Hosts run code from before version 3.
+- **Declared assumptions:** the holdout's data has no public copy; local mode is out of scope; risk staff do not pass report contents on.
+
 ## 6. Where an external reviewer should look first
 
 1. **The launch check on a live runner.** Inspect and `systemctl show` field names, Podman's `--rm`
@@ -733,3 +773,6 @@ worst 0.0550, a figure that carries the selection over stops.
       seed on another machine;
     - the scale (`lockrun/trials.py`, `scale`): leave-one-out, on t-statistics;
     - what is lost: power, and an edge in sizing.
+16. **Rule version 3 (§5b; its proof is not yet published):** the unique-transcript lemma and whether every channel really is constant
+    across outcomes (`tests/test_rule_v3.py`, the two-world test); the importance-sampled deep bars; and the bars' error on GARCH, where the
+    measured rate stands at the 0.05 the theorem proves for the calibration's null.

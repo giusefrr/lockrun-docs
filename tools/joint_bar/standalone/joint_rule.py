@@ -13,6 +13,9 @@ module and the package on the same seeded inputs and requires identical decision
                       rule before, rule version 1, whose z is the PSR statistic against 0 (what a holdout
                       initialised before 30 October 2026 keeps; lockrun's suite compares this copy with the
                       package under both).
+  rule version 3      spending by trial: alpha_of, spending_table, trial_bar, tilted_paths, and passes_v3: a trial
+                      passes iff its plain t over ex-ante risk is above the b_k of its place among the openings. No n, no
+                      scale, no families. lockrun's suite holds these identical to lockrun/calibration.py.
 """
 from __future__ import annotations
 
@@ -34,6 +37,18 @@ DF_FLOOR = 4
 MIN_RESIDUALS = 30
 N_GRID = (1, 2, 3, 5, 10, 20, 50, 100, 200, 500, 1000)
 N_CAP = 1000
+ALPHA_PLANNED = 0.045
+ALPHA_TAIL = 0.005
+PLAIN_FLOOR = 1e-3
+DEEPEST_ALPHA = 1e-16
+LEVELS_PER_DECADE = 10
+MARGIN_SE = 3.0
+REL_SE_MAX = 0.15
+MIN_HITS = 100
+IS_COMPONENTS = 8
+DEFENSIVE = 0.1
+IS_PILOT_PATHS = 20_000
+IS_PILOT_ROUNDS = 3
 DUMMY_C = 0.005           # z below which a weakly correlated pair is "too close"
 DUMMY_RHO_WEAK = 0.5      # |rho| below which a pair counts as weakly correlated
 DUMMY_ALPHA = 0.01        # target per-search false-positive rate for the partner-count test
@@ -425,10 +440,12 @@ def start_k(T: int, min_t: int) -> int:
 
 
 @functools.lru_cache(maxsize=16)
-def calibrate(T: int, min_t: int, df: float, threshold: float, paths: int, seed: int, stat: str = DEFAULT_STAT) -> dict:
+def calibrate(T: int, min_t: int, df: float, threshold: float, paths: int, seed: int, stat: str = DEFAULT_STAT,
+              spending: tuple | None = None) -> dict:
     """F's quantiles: the null CDF of the sup of the plain t for one trial, iid Student-t(df) returns (normal
     from NORMAL_DF), `paths` paths drawn in order from default_rng(seed). stat "psr": of sup z_k;
-    "w3": of the plain t of draws of unit variance, what a normalized return has, clipped to [-3, 3] first."""
+    "w3": of the plain t of draws of unit variance, what a normalized return has, clipped to [-3, 3] first.
+    spending: (planned openings, importance-sampling paths[, the deepest level wanted]): rule version 3's bars too."""
     sup = sup_t if stat == "t" or stat.startswith("w") else sup_z
     clip = float(stat[1:]) if stat.startswith("w") else None
     unit = 1.0 if df >= NORMAL_DF else math.sqrt(df / (df - 2))
@@ -443,8 +460,123 @@ def calibrate(T: int, min_t: int, df: float, threshold: float, paths: int, seed:
     ps = levels(threshold, paths)
     qs = np.quantile(s, ps)
     zs = np.maximum.accumulate(np.r_[qs, s[-1]])
-    return {"T": T, "min_t": min_t, "threshold": threshold, "df": df, "paths": paths, "seed": seed,
-            "zs": zs, "ps": np.r_[ps, 1.0]}
+    jb = {"T": T, "min_t": min_t, "threshold": threshold, "df": df, "paths": paths, "seed": seed,
+          "zs": zs, "ps": np.r_[ps, 1.0]}
+    if spending is not None:
+        jb["spending"] = spending_table(s, T, start_k(T, min_t), df, seed, *spending)
+    return jb
+
+
+# ---------------------------------------------------------------- rule version 3: spending by trial
+
+def alpha_of(k: int, planned: int) -> float:
+    """alpha_k: 0.045 / N up to the planned openings, then 0.005 * 6 / (pi^2 (k - N)^2): at most 0.05 in all."""
+    return ALPHA_PLANNED / planned if k <= planned else ALPHA_TAIL * 6 / (math.pi ** 2 * (k - planned) ** 2)
+
+
+def tail_levels(deepest: float = DEEPEST_ALPHA) -> list:
+    n = round(-math.log10(DEEPEST_ALPHA) - 2) * LEVELS_PER_DECADE
+    return [a for a in (10.0 ** (-2 - i / LEVELS_PER_DECADE) for i in range(n + 1)) if a >= deepest * (1 - 1e-12)]
+
+
+def tilted_paths(rng, n: int, T: int, start: int, df: float, b: float) -> tuple:
+    """(sup t, likelihood ratio p/q) of n paths from a mixture: each component tilts the normal part of the first k
+    draws to the mean and variance that put the t-statistic at k on b; DEFENSIVE of the paths are left at the null, so
+    no ratio exceeds 1 / DEFENSIVE. The mean of ratio x 1{sup >= c} is P(sup >= c) under the null."""
+    ks = np.unique(np.round(np.geomspace(start, T, IS_COMPONENTS)).astype(int))
+    rho = b / np.sqrt(ks)
+    sigma = 1 / np.sqrt(1 + rho * rho)
+    mu = rho * sigma
+    weights = np.r_[DEFENSIVE, np.full(len(ks), (1 - DEFENSIVE) / len(ks))]
+    sups, ratios = [], []
+    chunk = max(1000, int(2.5e8 / (12 * 8 * T)))
+    for at in range(0, n, chunk):
+        m = min(chunk, n - at)
+        comp = rng.choice(len(ks) + 1, size=m, p=weights)
+        z = rng.normal(size=(m, T))
+        tilted = np.arange(T)[None, :] < np.r_[0, ks][comp][:, None]
+        z = np.where(tilted, np.r_[0.0, mu][comp][:, None] + np.r_[1.0, sigma][comp][:, None] * z, z)
+        x = z if df >= NORMAL_DF else z * np.sqrt(df / rng.chisquare(df, size=z.shape))
+        sups.append(sup_t(x, start))
+        s1, s2 = np.cumsum(z, 1)[:, ks - 1], np.cumsum(z * z, 1)[:, ks - 1]
+        log_q = -ks * np.log(sigma) - (s2 - 2 * mu * s1 + ks * mu * mu) / (2 * sigma * sigma) + s2 / 2
+        ratios.append(1 / (DEFENSIVE + (1 - DEFENSIVE) * np.exp(log_q).mean(1)))
+    return np.concatenate(sups), np.concatenate(ratios)
+
+
+def tail_curve(s: np.ndarray, w: np.ndarray | None = None) -> tuple:
+    n = len(s)
+    order = np.argsort(-s, kind="stable")
+    s = s[order]
+    w = np.ones(n) if w is None else w[order]
+    p = np.cumsum(w) / n
+    return s, p, np.sqrt(np.maximum(np.cumsum(w * w) / n - p * p, 0.0) / n)
+
+
+def read_level(curve: tuple, alpha: float) -> tuple:
+    s, p, se = curve
+    over = p + MARGIN_SE * se > alpha
+    i = int(np.argmax(over)) if over.any() else len(s)
+    if i < MIN_HITS:
+        return None, None
+    rel = float(se[i - 1] / p[i - 1])
+    return (float(s[i - 1]) if rel <= REL_SE_MAX else None), rel
+
+
+def _station_curve(T, start, df, seed, station, alpha, is_paths) -> tuple:
+    rng = np.random.default_rng([seed, 3, station])
+    b = math.sqrt(2 * math.log(1 / alpha))
+    for _ in range(IS_PILOT_ROUNDS):
+        s, p, _ = tail_curve(*tilted_paths(rng, IS_PILOT_PATHS, T, start, df, b))
+        over = p > alpha
+        if over.any():
+            b = float(s[max(int(np.argmax(over)) - 1, 0)])
+    return tail_curve(*tilted_paths(rng, is_paths, T, start, df, b))
+
+
+def spending_table(plain: np.ndarray, T: int, start: int, df: float, seed: int, planned: int, is_paths: int,
+                   deepest: float = DEEPEST_ALPHA) -> dict:
+    plain_curve = tail_curve(plain)
+    curves: dict = {}
+
+    def bar_at(alpha: float) -> tuple:
+        if alpha >= max(PLAIN_FLOOR, 1000 / len(plain)) * (1 - 1e-12):      # the plain table has the paths for it
+            return read_level(plain_curve, alpha)
+        station = int(round(-2 * math.log10(alpha)))
+        if station not in curves:
+            curves[station] = _station_curve(T, start, df, seed, station, 10.0 ** (-station / 2), is_paths)
+        return read_level(curves[station], alpha)
+
+    alpha0 = ALPHA_PLANNED / planned
+    planned_bar, planned_rel = bar_at(alpha0) if alpha0 >= DEEPEST_ALPHA else (None, None)
+    out, top, dead = [], -math.inf, False
+    for alpha in tail_levels(deepest):
+        b, rel = (None, None) if dead else bar_at(alpha)
+        dead = dead or b is None
+        if b is not None:
+            top = b = max(top, b)
+        out.append([alpha, b, rel])
+    return {"planned_openings": planned, "alpha_planned": ALPHA_PLANNED, "alpha_tail": ALPHA_TAIL, "is_paths": is_paths,
+            "margin_se": MARGIN_SE, "rel_se_max": REL_SE_MAX, "components": IS_COMPONENTS, "defensive": DEFENSIVE,
+            "planned": {"alpha": alpha0, "bar": planned_bar, "rel_se": planned_rel}, "levels": out}
+
+
+def trial_bar(sp: dict, k: int) -> tuple:
+    """(alpha_k, b_k) from a spending table; None for b_k is +infinity, a plain FAIL."""
+    alpha = alpha_of(k, sp["planned_openings"])
+    if k <= sp["planned_openings"]:
+        return alpha, sp["planned"]["bar"]
+    for level, b, _ in sp["levels"]:
+        if level <= alpha:
+            return alpha, b
+    return alpha, None
+
+
+def passes_v3(t, b: float | None, min_t: int) -> bool:
+    """Rule version 3's verdict on one trial: its plain t over ex-ante risk strictly above b_k."""
+    if b is None or t is None or t.active is None or t.t_eff < min_t or t.t_eff <= 3:
+        return False
+    return t.tstat > b
 
 
 def bar(jb: dict, n: int) -> float:

@@ -208,6 +208,44 @@ def power(seeds: int, pool, chunks) -> dict:
     return out
 
 
+def _power_v3_cell(job: tuple) -> tuple:
+    """One edge trial among N openings, N the plan: the edge's own PASS, version 2 at c(N) with the other N - 1 null
+    trials in its scale, version 3 at b_k with alpha_k = 0.045 / N."""
+    seeds, s, n = job
+    v2 = v3 = 0
+    jb, sp = JB["normal"], JB["spending"][n]
+    b = trial_bar_of(sp)
+    for seed in seeds:
+        R = jw.market(seed, drift=s / np.sqrt(252))
+        cov = jr.window_covariances(R)
+        W = np.zeros((jw.T, 8))
+        W[:, 3] = 1.0
+        t = jr.trial_of_weights(W, R, cov)
+        v3 += jr.passes_v3(t, b, jw.MIN_T)
+        others = [jr.trial_of_weights(jw.base_weights(seed, i + 1, 8), R, cov) for i in range(min(n - 1, 19))]
+        h = jr.Holdout([t, *others], [], n - 1 - len(others))
+        v2 += h.joint(0, jb, jw.MIN_T, jw.THRESHOLD, JB.get("stat", jr.DEFAULT_STAT)).passed
+    return s, n, v2, v3
+
+
+def trial_bar_of(sp: dict) -> float:
+    return sp["planned"]["bar"]
+
+
+def power_v3(seeds: int, pool, chunks) -> dict:
+    """The standard cells, Sharpe 0 to 4, at N = 1, 5, 20, 100: what version 3 costs against version 2. The others in
+    version 2's scale are 19 at most, the rest counting in n only: the scale is 1 for null trials in either case."""
+    out: dict = {}
+    for n in (1, 5, 20, 100):
+        for s in (0.0, 1.0, 2.0, 3.0, 4.0):
+            v2 = v3 = 0
+            for _, _, a, b in pool.imap_unordered(_power_v3_cell, [(c, s, n) for c in chunks(seeds)]):
+                v2 += a
+                v3 += b
+            out[f"N={n} sharpe={s}"] = {"v2": v2 / seeds, "v3": v3 / seeds}
+    return out
+
+
 # ---------------------------------------------------------------- rules tried and dropped
 
 def _round2_trial(seed: int, i: int, R: np.ndarray, kind: str, c: float, k0: int) -> tuple:

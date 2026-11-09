@@ -55,6 +55,21 @@ From this directory's parent or from here; each prints its table with the README
 - `--jobs N`: worker processes (default: every core). `--compare`: the README's number beside each, a
   difference flagged. `--json FILE`: the results.
 
+## The rule, version 3: spending by trial (2 November 2026)
+
+The default for new holdouts in the product. `joint_rule.py` holds it (`alpha_of`, `spending_table`, `trial_bar`, `passes_v3`), identical to the package by `tests/test_redteam_v3.py`; its proof is not yet published (WHAT_IS_VERIFIED.md, status). The commands above other than this one measure versions 1 and 2. `python power_v3.py --seeds 4000` prints the table below, about 2 minutes on this laptop.
+
+PASS rate, honest trial, N openings planned and made, each trial's own bar against version 2's c(N):
+
+| N | Sharpe 1, v2 / v3 | Sharpe 2 | Sharpe 3 | Sharpe 4 |
+|--|--|--|--|--|
+| 1 | 0.092 / 0.083 | 0.337 / 0.321 | 0.707 / 0.689 | 0.933 / 0.923 |
+| 5 | 0.015 / 0.019 | 0.104 / 0.131 | 0.353 / 0.425 | 0.676 / 0.781 |
+| 20 | 0.004 / 0.005 | 0.046 / 0.057 | 0.219 / 0.253 | 0.546 / 0.613 |
+| 100 | 0.000 / 0.000 | 0.014 / 0.019 | 0.103 / 0.129 | 0.354 / 0.417 |
+
+Version 3 costs a little at N = 1 (alpha 0.045 against 0.05) and gains from N = 5 on, for an honest trial that is planned, because each trial is put to one bar rather than a sup over all of them. Past N it pays: alpha_k falls as 1/(k - N)^2. The red-team results are in `tools/redteam/README.md`.
+
 ## The rule, version 2: the plain t, window 60, warm-up 20
 
 The default of every command here. z is the plain t-statistic of the returns over their ex-ante risk, with no skew or kurtosis term, and the bar is the sup of that same t on null paths. `--stat psr` gives the rule before, whose statistic has the PSR's denominator. The plain t is lockrun's default as rule version 2 since 30 October 2026; a holdout initialised before keeps version 1, the PSR statistic, which `--stat psr` runs here.

@@ -1,7 +1,29 @@
 # What is verified
 
+## Status, 9 November 2026
+
+The code that runs live predates everything in this section.
+
+**What holds.** Rule version 3 closes the hole our red-team engine found in version 2: sequential promotes, 0.19 false
+promotions at 100 openings on GARCH (section 2). Its current form, the declared-portfolio bar, is being measured as a
+size table: the false-pass rate over alpha, per null world, strategy and level, from 0.045 to 0.045/20, 482,670
+simulation jobs so far. In 20 of the 27 null worlds every cell is complete and none is above alpha
+([SIZE_TABLE.md](SIZE_TABLE.md)). Some cells sit at alpha within their 95% interval, mostly one deviating strategy at
+0.96 to 1.04 alpha, so no level is declared settled yet.
+
+**What is open.** In the three skewed-crash worlds (rare, compensated crashes: skew-jumps, skew-rare, garch-skew), honest
+held portfolios pass above alpha: up to 1.86 alpha at 0.045/20 in skew-rare. The cause is measured: a holdout that
+happens to contain no crash looks like one with a true edge, and a bar built from the holdout's own returns cannot tell
+the two apart; no resampling scheme fixes it (four tested). A fix is being measured and is not decided. The size
+guarantee does not cover these worlds today. Four 50-asset worlds are still computing.
+
+**What is not yet published.** The declared-portfolio bar's code and its proof, the size table's other seven worlds,
+and the red-team engine's documentation. They will be published together once the skewed-crash question is decided.
+
 For a risk team or an external reviewer. Three lists: what ran on a live deployment, what only the
-test suite shows, and what we cannot verify. Status as of 29 October 2026: the backups and a full
+test suite shows, and what we cannot verify. Status as of 1 November 2026: K_risk's rotation to the
+Secure Enclave, K_risk2 and K_risk3 with 2-of-3, and rule version 2 ran live on a deployment built from
+zero (below). As of 29 October 2026: the backups and a full
 restore (plan item 4, deploy/DISASTER_RECOVERY.md) ran live as a drill on the nyc2 deployment that day
 (below); the outage rule decided during it (THREAT_MODEL.md §5) ran live in part. As of 27 October 2026: researcher-signed
 requests (plan item 1, THREAT_MODEL.md §2 and §3) ran live on a deployment built from zero that
@@ -10,9 +32,72 @@ signatures (claim 9) the night before that (all below); the rest is as of 18 Oct
 adversarial tests of plan items 2 and 3, their fixes, and the statistical rule that plan item 3 led
 to, the joint bar (section 2 and THREAT_MODEL.md §5a, 27 October), and its version 2 (the plain
 t-statistic for every new holdout, 30 October), have run only in the suite and the standalone
-simulations: the live deployment runs code from before them.
+simulations: the live deployment runs code from before them. So has rule version 3 (2 November, section 2,
+THREAT_MODEL.md §5b): nothing of it has run on a host.
 
 ## 1. Verified on a live deployment
+
+**K_risk's rotation, 2-of-3 and rule version 2, from zero (31 October – 1 November 2026, 15:22–14:46 UTC).**
+`demo-from-zero --researcher tester --holdout demo-1 --ops --yes` on an empty account: nyc2,
+`s-1vcpu-2gb-amd` for every droplet, anchors in `giusefrr/lockrun-anchors-demo6-20261031-1522`, verdicts in
+`giusefrr/lockrun-verdicts-demo6`, the write-once store on Backblaze B2. The run stopped twice at the
+operator's request, and the deployment stayed up afterwards.
+
+- **Results:**
+  1. First verdict, signed by a file K_risk: `demo-1` record 11, run `301904089916`, rule version 2,
+     statistic t, N 2, PASS. `verify-verdict` OK from fresh clones.
+  2. `risk-rotate` to the Secure Enclave ended "rotation complete", bindings record 14. Second verdict,
+     signed by the enclave key: record 29, run `583810c136f1`, rule version 2, statistic t, N 4, PASS.
+     `verify-verdict` OK from fresh clones. N counts holdout openings, each promoted run opened it twice;
+     the two runs refused in between (records 17 and 20) never opened it.
+  3. K_risk2 at bindings record 21 and K_risk3 at record 22, with drill file keys. The nightly recycle
+     after the rotation succeeded in 1188 s, and run `f82c06041fc9` ran clean on the runner it provisioned.
+  4. Backup chain `2026-11-01T0331Z`, a full backup and 12 increments, every signature and hash checked on
+     opening. `restore-service` refused the attestation with one signature ("needs 2 signatures"), and after
+     K_risk2's cosignature passed the check and stopped at "lockrun-p3-service exists".
+  5. The narrow store key, without `deleteFiles`: the capability check passed on ops, and a forced increment
+     (12) uploaded 3 objects, read back from the store under COMPLIANCE retention until 1 December 2026, its
+     commit pushed afterwards.
+  6. Every gate passed: `check-service`, `check-data`, `check-runner` on both runners, `check-firewalls`,
+     `anchors-verify`, `check-backups`.
+- **Five fixes, each a regression test and a commit, the run resuming at the step that failed:**
+  1. Executions were refused after a rotation: runners held no rotation chain and no P-256, researchers'
+     keys were not certified again (`fd7ee76`).
+  2. The service's dispatch refused the re-certified key, a bug in that fix (`2ebb1e6`).
+  3. `sign-verdicts` read the signing key as the first K_risk, and would have signed the first verdict
+     again (`1f85f66`).
+  4. Adding K_risk2 or K_risk3 counted as a rotation for what K_risk had certified, which refused ops'
+     increments (`e47d6e6`).
+  5. The capability check refused a valid narrow key: B2 answers such a key 400 on API v2 and v3, and the
+     suite's fake never did (`90c13d5`).
+- **Timings, from step 55 of 74 (seconds).** Steps 1–54 were not kept. `demo-ops-auth` 4 once the operator
+  had typed the token (1813 waiting); `backup-certs` 5; `ops-sync` 27; `demo-ops-storage` 112;
+  `backup-timers` 23; `demo-holdout` 21; `demo-execute` 15; `demo-promote` 4; `demo-verify-fresh` 18;
+  `demo-promote` 4; `anchors-deposit` 22; `anchors-verify` 5; `check-data` 21; `sign-verdicts` 13;
+  `verify-verdict` 1; `demo-ops-recycle` 1177; `recycle-data` 399; the three cutoffs 5, 3, 4. After them:
+  `risk-rotate` 33, `risk-recertify` 81, `restore-attest` 51, `check-service` 31, `check-data` 20,
+  `check-runner` 174 and 176, `check-firewalls` 4, `check-backups` 3.
+- **Not proven by this run:**
+  1. **A full backup with the narrow key.** Only increments ran with it here. The first full backup with it
+     is the one after the recycle of 2 November 2026, 03:00 UTC, on this deployment, not yet run when
+     this was written; until it is recorded here, this stays open. It uses the same upload as increment 12,
+     after the capability check.
+  2. **The rebuild after the check.** This run stopped at "lockrun-p3-service exists". `restore-load`,
+     `restore-data` and `restore-open` ran live in the drill of 29 October 2026 (below), before any rotation or
+     K_risk2. With a rotated K_risk and 2-of-3 they run in the suite only
+     (`tests/test_restore_after_rotation.py`, added after this run). That test found a bug no live run had
+     reached: a new data host refused every install under a rotated K_risk, so a restore after a rotation
+     could not pass `restore-data`. Fixed; not run on a host.
+  3. **Independent holders of the keys.** Both signatures were made on one laptop, K_risk2's with a drill file
+     key. This run shows the rule is enforced. That three people hold the three keys is organisational:
+     the code sees signatures, never who made them. Risk's organisation has to show it.
+- **Closed after the run, in the suite only.** Eight items the run left open were closed by `housekeeping-2`, with
+  the bug above, and have not run on a host: a full backup names the anchors commit it precedes (`restore-attest` had refused a
+  full backup alone), `reset-local` moves a rotated K_risk aside, every step refuses a `backup.x25519` under
+  `out/`, the operator droplet's run installs the heartbeat, `demo-ops-storage` prints both copies,
+  `docs-publish` names this deployment's repositories, a reaped job is gone before it is reported, and
+  `cosign-attestation` writes 0600. The heartbeat was not installed on this deployment, and the backup key was
+  on the laptop during this run.
 
 **The disaster-recovery drill (29 October 2026, 13:20–23:05 UTC).** On the nyc2 deployment
 (`s-1vcpu-2gb-amd`, Ubuntu 24.04). Storage: Backblaze B2, bucket `lockrun-p3-backups`, us-east-005,
@@ -570,7 +655,28 @@ statistics and every candidate (`test_joint_bar_standalone.py`, `test_rule_varia
 §5a table was measured again under version 2 through the implemented code: every cell at or below
 0.0385.
 
-*Found and fixed on the way, each a test and a commit:*
+**Rule version 3 (2 November 2026).** Our own red-team engine (`tools/redteam/`) found that version 2 could be beaten by promoting after
+each opening: 0.1915 false promotions at 100 openings on GARCH (lower bound 0.187), 0.0683 at 2 on the plain market. Version 3 closes this
+by spending alpha by trial, in a bar written at each opening, and by fail-only feedback (THREAT_MODEL.md §5b; its proof is not yet published, see the status above).
+What the suite shows: the bars, the importance sampling against 2M plain paths and its conservativeness (`test_rule_v3_bars.py`); each
+channel of the audit closed, the two-world non-interference test, the refusal on versions 1 and 2 including an existing version 2 ledger
+(`test_rule_v3.py`); the dry-run lane sharing nothing (`test_dry_run.py`); the three findings as permanent regressions, and a family for every
+channel that exploits it when a leaky control opens it (`test_redteam_v3.py`). Simulated, under stated nulls:
+
+| Run | Result |
+|--|--|
+| Version 3, all 37 families, N = 20, seed 0 | 0 findings, 0 near misses, nothing reached confirmation; best on search seeds `run_stop` 34/800 = 0.0425; sequential families only 1 to 4 generations |
+| Version 3, sequential and fail-bit families, N = 100, seed 1 | 0 findings, nothing reached confirmation; best `opening_spend` 13/300 = 0.0433; 9 to 17 generations |
+| Version 3, single-trial families, N = 1, seed 2 | 0 findings, nothing reached confirmation; best `leverage_burst` 7/300 = 0.0233 |
+| The findings of 2 November on version 3, 20000 seeds | `bar_crossing`, garch, 100 openings: 0.0495 and 0.0490 at N = 100, 0.0513 and 0.0482 at N = 20. `z_crossing`, t4, 81 openings: 0.0138 at N = 81, 0.0240 at N = 20 |
+| The 0.0513, on 100000 further seeds | 5050/100000 = 0.0505, lower bound 0.0494: not a finding |
+| Version 1, all families, seed 0 | Finding: `window_aim`, 58 equal assets, 100 openings, all spent before the promote: 0.2990, lower bound 0.2937. On version 3 the same strategy: 0.0002 at N = 100, 0.0008 at N = 20 |
+
+**What these results do not show.** On GARCH the bars run a little under their stated size: the attack at N = 100 has a union bound of 0.045 and measured 0.0495 (lower bound 0.047). The Student-t null of the calibration is a model, and this is the error in it. The same attack at N = 20 sits at about 0.05, 0.0505 on 100000 seeds, with no margin. That is not a finding, and it is not a guarantee either: the attacks were tuned against version 2, the search on version 3 did not rediscover anything as strong, so its clean reports are weaker evidence than they read, and a stronger attack on GARCH could cross 0.05.
+
+The tests cover the service code with simulated runners; that a real runner keeps these properties is for `deploy/ITEM7_CHECKLIST.md`.
+
+*Found and fixed on the way to version 2, each a test and a commit:*
 1. Risk's replay recomputed the data host's series hashes and detector flags but not its signed
    summaries (T, moments, k, the zero-padded Sharpe), which the verdict is computed from: a
    compromised data host could sign a Sharpe its series does not give, and `verify --holdout-file`
