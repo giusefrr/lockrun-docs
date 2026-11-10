@@ -683,7 +683,8 @@ only the bit FAIL: no summaries, no statistics, no statuses; FAIL verdicts stay 
 footprint per promote-related event; fixed slots (timeout + cleanup budget, from the schedule alone); promote answers on a fixed step. The first
 pass freezes the holdout, a reproduction ends it, a mismatch retires it. A dry-run lane on synthetic data gives researchers their
 errors and timings and shares nothing with the holdout. On version 1 and 2 holdouts every promote after the first FAIL is refused. The
-theorem, its assumptions and the channel table are in a proof that is not yet published (WHAT_IS_VERIFIED.md, status).
+theorem, its assumptions and the channel table are in RULE_V3_PROOF.md: the bound of 0.05 holds if its assumptions A1 and A2
+hold, and A1 fails, measured, in the skewed-crash worlds (WHAT_IS_VERIFIED.md, status).
 
 | Run | Result |
 |--|--|
@@ -773,6 +774,7 @@ N = 20, 0.219 and 0.253; N = 100, 0.103 and 0.129 (`tools/joint_bar/standalone/R
       seed on another machine;
     - the scale (`lockrun/trials.py`, `scale`): leave-one-out, on t-statistics;
     - what is lost: power, and an edge in sizing.
-16. **Rule version 3 (§5b; its proof is not yet published):** the unique-transcript lemma and whether every channel really is constant
+16. **Rule version 3 (§5b; RULE_V3_PROOF.md):** the unique-transcript lemma and whether every channel really is constant
     across outcomes (`tests/test_rule_v3.py`, the two-world test); the importance-sampled deep bars; and the bars' error on GARCH, where the
-    measured rate stands at the 0.05 the theorem proves for the calibration's null.
+    measured rate stands at the 0.05 the theorem gives if A1 holds; and A1 itself, which the size table measures and
+    the skewed-crash worlds fail.

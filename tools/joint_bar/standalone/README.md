@@ -57,7 +57,7 @@ From this directory's parent or from here; each prints its table with the README
 
 ## The rule, version 3: spending by trial (2 November 2026)
 
-The default for new holdouts in the product. `joint_rule.py` holds it (`alpha_of`, `spending_table`, `trial_bar`, `passes_v3`), identical to the package by `tests/test_redteam_v3.py`; its proof is not yet published (WHAT_IS_VERIFIED.md, status). The commands above other than this one measure versions 1 and 2. `python power_v3.py --seeds 4000` prints the table below, about 2 minutes on this laptop.
+The default for new holdouts in the product. `joint_rule.py` holds it (`alpha_of`, `spending_table`, `trial_bar`, `passes_v3`), identical to the package by `tests/test_redteam_v3.py`; its proof, its assumptions and their measured status are in RULE_V3_PROOF.md. Its declared-portfolio bar is `declared_active`, `graded_on`, `boot_seed`, `BootStream` and `boot_bar`, identical to the package by `tests/test_declared_bar.py`. The commands above other than this one measure versions 1 and 2. `python power_v3.py --seeds 4000` prints the table below, about 2 minutes on this laptop.
 
 PASS rate, honest trial, N openings planned and made, each trial's own bar against version 2's c(N):
 

@@ -1,24 +1,36 @@
 # What is verified
 
-## Status, 9 November 2026
+## Status, 10 November 2026
 
-The code that runs live predates everything in this section.
+No deployment is running. The last one, torn down on 7 November 2026, ran code that predates everything in this
+section.
 
 **What holds.** Rule version 3 closes the hole our red-team engine found in version 2: sequential promotes, 0.19 false
-promotions at 100 openings on GARCH (section 2). Its current form, the declared-portfolio bar, is being measured as a
-size table: the false-pass rate over alpha, per null world, strategy and level, from 0.045 to 0.045/20, 482,670
-simulation jobs so far. In 20 of the 27 null worlds every cell is complete and none is above alpha
-([SIZE_TABLE.md](SIZE_TABLE.md)). Some cells sit at alpha within their 95% interval, mostly one deviating strategy at
-0.96 to 1.04 alpha, so no level is declared settled yet.
+promotions at 100 openings on GARCH (section 2). Its proof ([RULE_V3_PROOF.md](RULE_V3_PROOF.md)) bounds the
+false-pass rate at 0.05 only if two assumptions hold, and neither is proven:
+- **A1:** under the holdout's null, each declared-portfolio bar passes at most at its level. A1 is measured by the
+  size table ([SIZE_TABLE.md](SIZE_TABLE.md)). In 20 of the 27 null worlds every cell is complete and none is above
+  alpha: 2,155 cells at 0.045 to 0.045/20, 2,077 below and 78 at alpha within their 95% interval, most of those one
+  deviating strategy at 0.96 to 1.04 alpha. No level is declared settled yet.
+- **A2:** nothing outcome-dependent reaches a researcher before the first pass. A2 is closed in code and tested in
+  the suite, not on a live host.
 
-**What is open.** In the three skewed-crash worlds (rare, compensated crashes: skew-jumps, skew-rare, garch-skew), honest
-held portfolios pass above alpha: up to 1.86 alpha at 0.045/20 in skew-rare. The cause is measured: a holdout that
-happens to contain no crash looks like one with a true edge, and a bar built from the holdout's own returns cannot tell
-the two apart; no resampling scheme fixes it (four tested). A fix is being measured and is not decided. The size
-guarantee does not cover these worlds today. Four 50-asset worlds are still computing.
+**What is open.** A1 fails in the three skewed-crash worlds (rare, compensated crashes: skew-jumps, skew-rare,
+garch-skew). Honest held portfolios pass above alpha there: up to 1.92 alpha at 0.045/20 in skew-rare, on 400,000 null
+paths. The cause is measured: a holdout that happens to contain no crash looks like one with a true edge, and a bar
+built from the holdout's own returns cannot tell the two apart. None of the five resampling schemes tested fixes it.
+So the 0.05 bound does not cover a holdout whose returns can carry a compensated crash premium.
 
-**What is not yet published.** The declared-portfolio bar's code and its proof, the size table's other seven worlds,
-and the red-team engine's documentation. They will be published together once the skewed-crash question is decided.
+The fix is decided: a hurdle, the net crash tail of a history before the holdout, subtracted from every graded step,
+with a floor that risk declares. It was measured on ten cells with the history built by running the declared exposure
+rule over it: every cell below alpha (the worst 0.87 alpha), and a power cost of at most 1.1 points on the cells
+measured for power (garch and main). The decided form, the holdout's declared weights on the history's returns,
+differs and must be measured again. It is not implemented and not proven. Four 50-asset worlds are still computing.
+
+**What is published, and what is not.** Published: the proof with its assumptions and their measured status, the
+red-team engine's documentation ([REDTEAM.md](REDTEAM.md)), and the declared-portfolio bar's numpy-only code
+(`tools/joint_bar/standalone/joint_rule.py`). Not yet published: the size table's other seven worlds (the four
+computing, and the three skewed-crash worlds, whose numbers are in the proof) and lockrun's own source.
 
 For a risk team or an external reviewer. Three lists: what ran on a live deployment, what only the
 test suite shows, and what we cannot verify. Status as of 1 November 2026: K_risk's rotation to the
@@ -42,6 +54,14 @@ THREAT_MODEL.md §5b): nothing of it has run on a host.
 `s-1vcpu-2gb-amd` for every droplet, anchors in `giusefrr/lockrun-anchors-demo6-20261031-1522`, verdicts in
 `giusefrr/lockrun-verdicts-demo6`, the write-once store on Backblaze B2. The run stopped twice at the
 operator's request, and the deployment stayed up afterwards.
+
+**Torn down 7 November 2026, 03:42:49–03:43:24 UTC.** `./do.sh destroy` (nyc2, the drill's env), its plan reviewed
+first (`destroy-plan`): the five droplets by ID (lockrun-p3-verify-8 616769387, lockrun-p3-runner-tester8
+616766984, lockrun-p3-data-3 614650047, lockrun-p3-ops 614556871, lockrun-p3-service 614550296), each gone from
+both lists, then the six firewalls, the seven lockrun-p3 tags, the VPC and the lockrun-ops SSH key. Kept as they
+are: the backups on Backblaze B2 (write-once) and the anchors and verdicts repositories. The DigitalOcean tokens
+lockrun-p3-doctl-6 and lockrun-p3-ops-7 are left for the operator to revoke in the console (doctl cannot revoke a token): not revoked at the time of writing.
+Afterwards the account holds 7 droplets: the production droplet and the six lockrun-batch c-4s, none lockrun-p3.
 
 - **Results:**
   1. First verdict, signed by a file K_risk: `demo-1` record 11, run `301904089916`, rule version 2,
@@ -657,7 +677,7 @@ statistics and every candidate (`test_joint_bar_standalone.py`, `test_rule_varia
 
 **Rule version 3 (2 November 2026).** Our own red-team engine (`tools/redteam/`) found that version 2 could be beaten by promoting after
 each opening: 0.1915 false promotions at 100 openings on GARCH (lower bound 0.187), 0.0683 at 2 on the plain market. Version 3 closes this
-by spending alpha by trial, in a bar written at each opening, and by fail-only feedback (THREAT_MODEL.md §5b; its proof is not yet published, see the status above).
+by spending alpha by trial, in a bar written at each opening, and by fail-only feedback (THREAT_MODEL.md §5b; its proof and its assumptions' status: [RULE_V3_PROOF.md](RULE_V3_PROOF.md)).
 What the suite shows: the bars, the importance sampling against 2M plain paths and its conservativeness (`test_rule_v3_bars.py`); each
 channel of the audit closed, the two-world non-interference test, the refusal on versions 1 and 2 including an existing version 2 ledger
 (`test_rule_v3.py`); the dry-run lane sharing nothing (`test_dry_run.py`); the three findings as permanent regressions, and a family for every

@@ -1,12 +1,17 @@
 # Size table: the declared-portfolio bar (rule version 3)
 
-Status, 9 November 2026. **The code of the rule measured here (rule version 3 with the declared-portfolio bar) and its
-proof are not yet public: they will be published with this table.** This table holds the 20 of 27 null worlds whose
-every cell is complete. **4 worlds are still computing** (garch50, garch50-t6, factor50, factor50-t6). **The 3 skewed-crash worlds
-(skew-jumps, skew-rare, garch-skew) fail and are open:** honest held portfolios pass above alpha there (up to 1.86 alpha at 0.045/20 in
-skew-rare, the strategy `single`), the cause is measured (a holdout that happens to contain no crash looks like one
-with a true edge, and a bar built from the holdout's own returns cannot tell them apart), and the fix is not decided.
-The size guarantee does not cover them today, and they are not in this table.
+Status, 10 November 2026. This table measures assumption A1 of rule version 3's proof
+([RULE_V3_PROOF.md](RULE_V3_PROOF.md)): under the holdout's null, each declared-portfolio bar passes at most at its
+level. The proof's bound of 0.05 holds only where A1 does. The rule's numpy-only code is published
+(`tools/joint_bar/standalone/joint_rule.py`); lockrun's own source is not.
+
+This table holds the 20 of 27 null worlds whose every cell is complete; in them, no cell is above alpha.
+- **4 worlds are still computing:** garch50, garch50-t6, factor50 and factor50-t6.
+- **The 3 skewed-crash worlds fail A1 and are not in this table:** skew-jumps, skew-rare and garch-skew. Honest held
+  portfolios pass above alpha there: up to 1.92 alpha at 0.045/20 in skew-rare, strategy `single`, on 400,000 null
+  paths. Their numbers and the cause are in the proof.
+- **The fix is decided and not implemented:** a crash-premium hurdle from a history before the holdout. Until it is
+  implemented and measured, the size guarantee does not cover those worlds.
 
 ## What a cell is
 
@@ -29,7 +34,7 @@ and its verdict from the interval alone: **below** (the interval entirely under 
   declaration; the other 22 are honest declarations and two `near:` trials at 0.96 to 0.98. **No cell of these 20
   worlds is above alpha.**
 
-Source: lockrun's `tools/redteam/boot_size.py` (branch v3-close, not yet public), the grading of the active-set fix of
+Source: lockrun's `tools/redteam/boot_size.py` (lockrun's source, not public), the grading of the active-set fix of
 6 November and the sequential stop in force since 7 November (levels stopped under the earlier stop that this one would
 not have stopped were dropped and run again); measured on the operator's machine and on cloud batch droplets
 (6 to 9 November), the batch at commit 3b8f481; this file rendered at 29e03c7 from the merged results:

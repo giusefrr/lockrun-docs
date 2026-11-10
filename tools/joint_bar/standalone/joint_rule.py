@@ -359,6 +359,24 @@ def active_steps(risk: np.ndarray, floor: float = EXPOSURE["floor"]) -> np.ndarr
     return np.flatnonzero(live & (risk >= floor * float(np.median(risk[live]))))
 
 
+def declared_active(risk: np.ndarray, floor: float = EXPOSURE["floor"]) -> np.ndarray:
+    """Rule version 3: the declared portfolio's active steps, fixed once at opening from its ex-ante risk over the
+    whole holdout (risk >= floor x the median of the declared risks > 0). A trial within its declaration is graded
+    on these steps alone (graded_on), so the trial that stops at tau is graded on a prefix of x_d, the series the
+    declared bar takes the sup over; its own risks never move the set."""
+    return active_steps(np.asarray(risk, dtype=float), floor)
+
+
+def graded_on(r: np.ndarray, risk: np.ndarray, active) -> np.ndarray:
+    """A trial's normalized returns on the declared active steps where it holds risk: r_t / risk_t for t in active
+    (in order) with risk_t > 0 and t within the trial; the steps after its stop (risk 0) drop out."""
+    r, risk = np.asarray(r, dtype=float), np.asarray(risk, dtype=float)
+    a = np.asarray(active, dtype=np.int64)
+    a = a[a < min(len(r), len(risk))]
+    keep = a[np.isfinite(risk[a]) & (risk[a] > 0)]
+    return r[keep] / risk[keep]
+
+
 def active_moments(r: np.ndarray, risk: np.ndarray, floor: float = EXPOSURE["floor"]) -> tuple[int, Moments | None]:
     """(T_eff, the moments of r / risk on the active steps, None when they are no valid series)."""
     idx = active_steps(risk, floor)
@@ -366,6 +384,11 @@ def active_moments(r: np.ndarray, risk: np.ndarray, floor: float = EXPOSURE["flo
         return len(idx), moments(r[idx] / risk[idx])
     except ValueError:
         return len(idx), None
+
+
+def active_series(r: np.ndarray, risk: np.ndarray, floor: float = EXPOSURE["floor"]) -> np.ndarray:
+    idx = active_steps(risk, floor)
+    return r[idx] / risk[idx]
 
 
 def psr_z(m: Moments) -> float:
@@ -579,6 +602,114 @@ def passes_v3(t, b: float | None, min_t: int) -> bool:
     return t.tstat > b
 
 
+# ---------------------------------------------------------------- rule version 3, the trial's own bar
+#
+# b_k from the trial's own normalized returns x (its active steps, r / ex-ante risk), not from the holdout's assets: the
+# (1 - alpha_k) quantile of the sup over k in [start, T] of the plain t of series y of length T built from x by a
+# stationary block bootstrap (blocks of mean length BOOT_BLOCK(T), a rule of T alone, never of the data), each y made
+# mean zero by `mode`. The bar is the m-th largest of B = ceil(m / alpha) - 1 replicates, m = BOOT_M: a trial passes
+# iff fewer than m replicates reach its t, so that #{S_b >= t} + 1 <= alpha (B + 1). The replicates' uniforms come from
+# default_rng(seed) in batches of BOOT_BATCH and do not depend on len(x): the same seed gives the same replicates, the
+# bar is a function of x and the seed alone, and anyone holding both recomputes it.
+
+BOOT_M = 20
+BOOT_BATCH = 1000
+BOOT_MODES = ("signs", "center")
+
+
+def boot_seed(opening: bytes, secret: bytes) -> list[int]:
+    """A trial's seed: SHA256(its signed opening record || the holdout's secret), eight 32-bit words for default_rng.
+    The security is the secret's: unknown to the researcher when the weights are chosen (the data host makes it and
+    keeps it until the holdout is retired, then publishes it), so the block sampling that grades a series cannot be
+    chosen against. The hash only binds each seed to its own trial and spreads it; with the secret known beforehand
+    the seed is known, and a bar can be steered (tests/test_boot_seed.py)."""
+    import hashlib
+    d = hashlib.sha256(bytes(opening) + bytes(secret)).digest()
+    return [int.from_bytes(d[i:i + 4], "big") for i in range(0, 32, 4)]
+
+
+def boot_block(T: int) -> float:
+    """The stationary bootstrap's mean block length: T^(1/3), the rate of Politis and White (2004), fixed from T."""
+    return T ** (1 / 3)
+
+
+def boot_replicates(alpha: float, m: int = BOOT_M) -> int:
+    return max(int(math.ceil(m / alpha - 1e-9)) - 1, m)
+
+
+class BootStream:
+    """The replicates' randomness for one seed, independent of the series: per replicate and step, the uniform that
+    places the current block's start, the step's offset inside its block, and its sign."""
+
+    def __init__(self, seed, T: int, B: int, block: float | None = None):
+        self.T, self.B, self.block = T, B, boot_block(T) if block is None else block
+        self.seed = seed
+        self._batches: list = []
+
+    def batch(self, j: int) -> tuple:
+        while len(self._batches) <= j:
+            i = len(self._batches)
+            M = min(BOOT_BATCH, self.B - i * BOOT_BATCH)
+            rng = np.random.default_rng([*np.atleast_1d(self.seed).tolist(), i])
+            pos = np.arange(self.T)
+            new = rng.random((M, self.T)) < 1 / self.block
+            new[:, 0] = True
+            u = rng.random((M, self.T))
+            last = np.maximum.accumulate(np.where(new, pos, 0), axis=1)
+            start_u = np.take_along_axis(u, last, 1)
+            off = (pos - last).astype(np.int32)
+            signs = np.where(rng.random((M, self.T)) < 0.5, -1.0, 1.0)
+            self._batches.append((start_u, off, signs))
+        return self._batches[j]
+
+    def batches(self) -> int:
+        return -(-self.B // BOOT_BATCH)
+
+
+def boot_sups(x: np.ndarray, stream: BootStream, j: int, start: int, mode: str = "signs") -> np.ndarray:
+    """One batch's sup t of the replicates built from x."""
+    n = len(x)
+    start_u, off, signs = stream.batch(j)
+    idx = (np.floor(start_u * n).astype(np.int64) + off) % n
+    if mode == "signs":
+        y = x[idx] * signs
+    elif mode == "center":
+        y = x[idx] - x.mean()
+    else:
+        raise ValueError(mode)
+    return sup_t(y, start)
+
+
+def boot_bar(x, alpha: float, seed, T: int, min_t: int, mode: str = "signs", m: int = BOOT_M,
+             stream: BootStream | None = None) -> float:
+    """b_k for the series x: the m-th largest replicate sup."""
+    x = np.asarray(x, dtype=float)
+    stream = stream or BootStream(seed, T, boot_replicates(alpha, m))
+    s = np.concatenate([boot_sups(x, stream, j, start_k(T, min_t), mode) for j in range(stream.batches())])
+    s = np.where(np.isnan(s), -np.inf, s)
+    return float(np.sort(s)[-m])
+
+
+def boot_passes(x, t: float, alpha: float, seed, T: int, min_t: int, mode: str = "signs", m: int = BOOT_M,
+                stream: BootStream | None = None) -> bool:
+    """t > boot_bar(x, ...), decided without the whole bar: false as soon as m replicates reach t."""
+    x = np.asarray(x, dtype=float)
+    stream = stream or BootStream(seed, T, boot_replicates(alpha, m))
+    reached = 0
+    for j in range(stream.batches()):
+        reached += int((boot_sups(x, stream, j, start_k(T, min_t), mode) >= t).sum())
+        if reached >= m:
+            return False
+    return True
+
+
+def passes_boot(trial, alpha: float, seed, T: int, min_t: int, mode: str = "signs", m: int = BOOT_M, stream=None) -> bool:
+    """Rule version 3 with the trial's own bar: its plain t over ex-ante risk above boot_bar of its own series."""
+    if trial is None or trial.active is None or trial.t_eff < min_t or trial.t_eff <= 3:
+        return False
+    return boot_passes(trial.x, trial.tstat, alpha, seed, T, min_t, mode, m, stream)
+
+
 def bar(jb: dict, n: int) -> float:
     """c(n) = F^-1(threshold^(1/n)), extrapolated linearly in log n beyond N_CAP."""
     if n < 1:
@@ -613,6 +744,7 @@ class Trial:
     m: Moments
     t_eff: int | None = None
     active: Moments | None = None
+    x: np.ndarray | None = None      # the active steps' r / risk: what the trial's own bar is built from
 
     @property
     def tstat(self) -> float | None:
@@ -628,8 +760,9 @@ def trial_of_weights(W: np.ndarray, R: np.ndarray, cov: tuple) -> Trial:
             return Trial(r, moments(r), len(idx), moments(bounded_returns(r[idx], risk[idx], cov)))
         except ValueError:
             return Trial(r, moments(r), len(idx), None)
-    t_eff, active = active_moments(r, risks_of(W, cov))
-    return Trial(r, moments(r), t_eff, active)
+    risk = risks_of(W, cov)
+    t_eff, active = active_moments(r, risk)
+    return Trial(r, moments(r), t_eff, active, active_series(r, risk) if active is not None else None)
 
 
 def trial_of_returns(r) -> Trial:

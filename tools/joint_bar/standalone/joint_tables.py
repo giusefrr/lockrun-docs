@@ -246,6 +246,41 @@ def power_v3(seeds: int, pool, chunks) -> dict:
     return out
 
 
+def _power_declared_cell(job: tuple) -> tuple:
+    """The standard cell's edge trial (asset 3, every period, all T): version 2 at c(N), version 3 at b_k, and
+    version 3 with the declared portfolio's bar (the bootstrap of the declared portfolio's normalized returns over all
+    T, the seed derived from a secret: boot_bar). The trial trades what it declared for all T: the bar is its own."""
+    seeds, s, n = job
+    v2 = v3 = dec = 0
+    jb, sp = JB["normal"], JB["spending"][n]
+    b = trial_bar_of(sp)
+    for seed in seeds:
+        R = jw.market(seed, drift=s / np.sqrt(252))
+        cov = jr.window_covariances(R)
+        W = np.zeros((jw.T, 8))
+        W[:, 3] = 1.0
+        t = jr.trial_of_weights(W, R, cov)
+        v3 += jr.passes_v3(t, b, jw.MIN_T)
+        boot = jr.boot_seed(f"power {seed} {s} {n}".encode(), np.random.default_rng([seed, 99]).bytes(32))
+        dec += bool(t.tstat is not None and t.x is not None and t.t_eff >= jw.MIN_T
+                    and t.tstat > jr.boot_bar(t.x, 0.045 / n, boot, jw.T, jw.MIN_T))
+        others = [jr.trial_of_weights(jw.base_weights(seed, i + 1, 8), R, cov) for i in range(min(n - 1, 19))]
+        h = jr.Holdout([t, *others], [], n - 1 - len(others))
+        v2 += h.joint(0, jb, jw.MIN_T, jw.THRESHOLD, JB.get("stat", jr.DEFAULT_STAT)).passed
+    return s, n, v2, v3, dec
+
+
+def power_declared(seeds: int, pool, chunks, cells=(1, 20)) -> dict:
+    out: dict = {}
+    for n in cells:
+        for s in (0.0, 1.0, 2.0, 3.0, 4.0):
+            got = [0, 0, 0]
+            for _, _, *k in pool.imap_unordered(_power_declared_cell, [(c, s, n) for c in chunks(seeds)]):
+                got = [g + x for g, x in zip(got, k)]
+            out[f"N={n} sharpe={s}"] = {"v2": got[0] / seeds, "v3": got[1] / seeds, "declared": got[2] / seeds}
+    return out
+
+
 # ---------------------------------------------------------------- rules tried and dropped
 
 def _round2_trial(seed: int, i: int, R: np.ndarray, kind: str, c: float, k0: int) -> tuple:
