@@ -7,6 +7,8 @@ Status, 10 November 2026: rule version 3 is the default for new holdouts; its ba
 - **Proven:** the theorem below, under assumptions A1 and A2. No assumption is proven here.
 - **A1 is measured, not proven.** In the 20 complete null worlds no cell is above alpha (2,077 below, 78 at alpha
   within their 95% interval), and it fails in the three skewed-crash worlds. No level of the size table is settled.
+  Read with the correction of 10 November 2026 at the top of [SIZE_TABLE.md](SIZE_TABLE.md): a 'below' close to alpha
+  is unsettled.
 - **A2 is closed in code and tested.** It is not verified on a live host.
 - **The crash-premium hurdle** is decided and measured on ten cells. It is not implemented and not proven.
 
@@ -103,6 +105,8 @@ where A1 holds. On iid series the declared bar measures 1.007 [0.970, 1.044] alp
 tried, measured 1.186 alpha on iid series.
 
 **Where A1 is measured to hold: the size table** (SIZE_TABLE.md).
+- Read with the correction of 10 November 2026 at the top of [SIZE_TABLE.md](SIZE_TABLE.md): a 'below' close to alpha
+  is unsettled.
 - **Scope.** The 20 complete null worlds: main, garch, t3, t4, t5, jumps, garch-jumps, garch-regime, main-regime,
   factor, factor-regime, factor-t6, factor-t6-regime, garch-normal, garch-t6, garch-t6-regime, garch-persistent,
   garch-99, garch-99-t8 and equal58. 22 strategies each (13 in equal58), at the levels 0.045, 0.045/2, 0.045/5,
@@ -134,6 +138,8 @@ portfolios pass above alpha there. On 400,000 null paths per cell (`tools/redtea
 | garch-skew sticky | 0.97 [0.96, 0.98] | 1.02 [0.99, 1.05] | 1.12 [1.06, 1.19] |
 
 The size table's own partial cells for these worlds agree: skew-rare `single` at 0.045/20 is 1.86 [1.55, 2.18].
+Read with the correction of 10 November 2026 at the top of [SIZE_TABLE.md](SIZE_TABLE.md): a 'below' close to alpha is
+unsettled.
 
 **The cause, measured.**
 - Between crashes, the compensating drift gives the declared series a positive mean on every step. A holdout that
@@ -187,6 +193,8 @@ returns, differs, and must be measured again:
 alone, on A_d. Its series differs from x_d by that bounded amount on the same steps, and the construction does not
 cover it. Measured on GARCH, moving toward switch_tail or a single asset as far as the tolerance allows gives 0.88 to
 0.93 alpha. In the size table's 20 worlds the `near:` cells are below or at the boundary.
+Read with the correction of 10 November 2026 at the top of [SIZE_TABLE.md](SIZE_TABLE.md): a 'below' close to alpha is
+unsettled.
 
 **Deviation.** A deviating trial passes only if its t beats both b_k and its own bar, so its size is at most that of
 either bar alone. That bounds nothing by itself: the own bar is the old rule's, which is over alpha under stopping. It
@@ -194,6 +202,8 @@ is measured on GARCH, declaring equal weights or inverse-vol and trading switch_
 twin: 0.76 to 0.91 alpha at 0.045 and 0.045/5. Every deviator scores below the same strategy declared honestly, so
 deviating gains nothing, as measured. In the size table, `dev:equal>switch_tail` reaches 0.96 to 1.04: it is most of
 the boundary cells.
+Read with the correction of 10 November 2026 at the top of [SIZE_TABLE.md](SIZE_TABLE.md): a 'below' close to alpha is
+unsettled.
 
 **The seed.** seed = SHA256(the data host's signed opening statement of the trial || the holdout's secret).
 - The secret is made by the data host at install and is in no answer and no backup before retirement.

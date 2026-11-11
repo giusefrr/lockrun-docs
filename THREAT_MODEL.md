@@ -778,3 +778,4 @@ N = 20, 0.219 and 0.253; N = 100, 0.103 and 0.129 (`tools/joint_bar/standalone/R
     across outcomes (`tests/test_rule_v3.py`, the two-world test); the importance-sampled deep bars; and the bars' error on GARCH, where the
     measured rate stands at the 0.05 the theorem gives if A1 holds; and A1 itself, which the size table measures and
     the skewed-crash worlds fail.
+    Read the size table with the correction of 10 November 2026 at its top: a 'below' close to alpha is unsettled.

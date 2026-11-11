@@ -1,5 +1,11 @@
 # Size table: the declared-portfolio bar (rule version 3)
 
+**Correction, 10 November 2026.** The size table's cells stop early under a sequential rule, and the 95% intervals
+printed here do not account for that. Within 2% of alpha they cover the true value about 88 to 93% of the time (up to
+94.5% within 5%), and a cell exactly at alpha is read 'below' up to 5.7% of the time. A cell at 1.05 alpha is read
+'below' less than 0.2% of the time. Until the table is recomputed with intervals that are valid under early stopping,
+read a 'below' close to alpha as unsettled.
+
 Status, 10 November 2026. This table measures assumption A1 of rule version 3's proof
 ([RULE_V3_PROOF.md](RULE_V3_PROOF.md)): under the holdout's null, each declared-portfolio bar passes at most at its
 level. The proof's bound of 0.05 holds only where A1 does. The rule's numpy-only code is published

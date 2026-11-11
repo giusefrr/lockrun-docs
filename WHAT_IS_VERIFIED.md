@@ -5,6 +5,12 @@
 No deployment is running. The last one, torn down on 7 November 2026, ran code that predates everything in this
 section.
 
+**Correction, 10 November 2026.** The size table's cells stop early under a sequential rule, and the 95% intervals
+printed in the size table ([SIZE_TABLE.md](SIZE_TABLE.md)) do not account for that. Within 2% of alpha they cover the
+true value about 88 to 93% of the time (up to 94.5% within 5%), and a cell exactly at alpha is read 'below' up to 5.7%
+of the time. A cell at 1.05 alpha is read 'below' less than 0.2% of the time. Until the table is recomputed with
+intervals that are valid under early stopping, read a 'below' close to alpha as unsettled.
+
 **What holds.** Rule version 3 closes the hole our red-team engine found in version 2: sequential promotes, 0.19 false
 promotions at 100 openings on GARCH (section 2). Its proof ([RULE_V3_PROOF.md](RULE_V3_PROOF.md)) bounds the
 false-pass rate at 0.05 only if two assumptions hold, and neither is proven:
@@ -12,6 +18,7 @@ false-pass rate at 0.05 only if two assumptions hold, and neither is proven:
   size table ([SIZE_TABLE.md](SIZE_TABLE.md)). In 20 of the 27 null worlds every cell is complete and none is above
   alpha: 2,155 cells at 0.045 to 0.045/20, 2,077 below and 78 at alpha within their 95% interval, most of those one
   deviating strategy at 0.96 to 1.04 alpha. No level is declared settled yet.
+  Read with the correction above: a 'below' close to alpha is unsettled.
 - **A2:** nothing outcome-dependent reaches a researcher before the first pass. A2 is closed in code and tested in
   the suite, not on a live host.
 
