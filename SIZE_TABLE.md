@@ -4,7 +4,9 @@
 printed here do not account for that. Within 2% of alpha they cover the true value about 88 to 93% of the time (up to
 94.5% within 5%), and a cell exactly at alpha is read 'below' up to 5.7% of the time. A cell at 1.05 alpha is read
 'below' less than 0.2% of the time. Until the table is recomputed with intervals that are valid under early stopping,
-read a 'below' close to alpha as unsettled.
+read a 'below' close to alpha as unsettled. 34 of this table's cells (garch and main, at 0.045 and 0.045/5) were
+computed on 5 November, before a later change to the rule's active set, and no job records were kept for them, so they
+cannot be checked against the current code. They are being recomputed from scratch with the rest of the table.
 
 Status, 10 November 2026. This table measures assumption A1 of rule version 3's proof
 ([RULE_V3_PROOF.md](RULE_V3_PROOF.md)): under the holdout's null, each declared-portfolio bar passes at most at its
